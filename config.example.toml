@@ -1,0 +1,71 @@
+# htv — harness session dashboard
+# Copy this to ~/.config/htv/config.toml and edit to taste.
+# All keys are optional; missing keys fall back to the defaults shown here.
+
+[app]
+# Seconds between list refreshes (mtime rescan + process scan).
+refresh_interval = 2.0
+# Seconds between background AI title generation attempts.
+ai_title_interval = 3.0
+# A session is considered "active" if its jsonl mtime is within this many
+# seconds AND we can find a matching harness process in the session's cwd.
+# (Kiro uses .lock files and ignores this window.)
+active_mtime_window_sec = 90
+
+[ai]
+# CLI command used to generate titles and answer /-search queries.
+# The prompt is passed as a single argv string on the end.
+# Set command = [] to disable all AI features.
+command = ["pi", "-p"]
+timeout = 45
+
+[focus]
+# When a session is active but NOT in a tmux pane, this command is run to
+# focus the terminal window holding it. Placeholders: {pid} {tty} {title} {comm}.
+# Empty list = disabled (just show an info line).
+#
+# Default assumes kitty with allow_remote_control enabled.
+# Alternatives:
+#   command = ["wmctrl", "-a", "{title}"]
+#   command = []                                 # disable
+command = ["kitten", "@", "focus-window", "--match", "pid:{pid}"]
+
+# ------------------------------------------------------------------
+# Harnesses — one block per session store.
+# `kind` picks the adapter implementation; `name` (the block key) is a
+# user-facing label and can be anything. Duplicate names are allowed if
+# you want multiple stores of the same kind.
+# ------------------------------------------------------------------
+
+[harnesses.kiro]
+kind         = "kiro"
+enabled      = true
+session_dir  = "~/.kiro/sessions/cli"
+resume_cmd   = ["kiro-cli", "chat", "--resume-id", "{sid}"]
+label        = "K"
+color        = "green"
+
+[harnesses.claude]
+kind         = "claude"
+enabled      = true
+projects_dir = "~/.claude/projects"
+resume_cmd   = ["claude", "--resume", "{sid}"]
+label        = "CC"
+color        = "magenta"
+
+[harnesses.pi]
+kind         = "pi"
+enabled      = true
+sessions_dir = "~/.pi/agent/sessions"
+resume_cmd   = ["pi", "--session", "{sid}"]
+label        = "pi"
+color        = "cyan"
+
+# Future — uncomment once codex-cli lands:
+# [harnesses.codex]
+# kind        = "codex"
+# enabled     = true
+# sessions_dir = "~/.codex/sessions"
+# resume_cmd  = ["codex", "--resume", "{sid}"]
+# label       = "X"
+# color       = "yellow"

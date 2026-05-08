@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "htv"
+version = "0.1.0"
+description = "Harness session dashboard — view and resume Kiro, Claude Code, and pi sessions from one curses TUI."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Taimoor Chatha" },
+]
+keywords = ["cli", "tui", "curses", "kiro", "claude", "pi", "codex", "session-manager"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+    "Topic :: Terminals",
+    "Topic :: Utilities",
+]
+# Stdlib only.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/taimoorchatha/htv"
+Issues = "https://github.com/taimoorchatha/htv/issues"
+
+[project.scripts]
+htv = "htv_app.__main__:main"
+
+[tool.setuptools]
+packages = ["htv_app", "htv_app.adapters"]
+
+[tool.setuptools.package-data]
+htv_app = ["../config.example.toml"]
+
+[tool.setuptools.data-files]
+"share/htv" = ["config.example.toml"]

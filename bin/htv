@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# htv — harness session dashboard. Thin shim that execs the Python package.
+set -e
+# Resolve symlinks so PYTHONPATH points at the real package dir even when
+# this script is symlinked from ~/bin/htv.
+SRC="${BASH_SOURCE[0]}"
+while [ -L "$SRC" ]; do
+  DIR="$(cd -P "$(dirname "$SRC")" && pwd)"
+  SRC="$(readlink "$SRC")"
+  [[ $SRC != /* ]] && SRC="$DIR/$SRC"
+done
+HTV_ROOT="$(cd -P "$(dirname "$SRC")/.." && pwd)"
+export PYTHONPATH="$HTV_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -u -m htv_app "$@"

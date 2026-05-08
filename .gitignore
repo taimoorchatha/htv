@@ -1,0 +1,23 @@
+# Test fixtures copied from user stores. Do not commit.
+test-data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+pip-wheel-metadata/
+
+# Editor / tooling
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Runtime state that might accidentally land here
+*.lock
