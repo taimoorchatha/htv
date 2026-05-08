@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
-# bin/install-hooks — wire bin/review as the git pre-push hook.
-# Safe to re-run: overwrites the hook.
+# bin/install-hooks — wire bin/review as git pre-commit + pre-push hooks.
+# Safe to re-run: overwrites both hooks.
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="$ROOT/.git/hooks/pre-push"
-mkdir -p "$(dirname "$HOOK")"
-cat > "$HOOK" <<'SH'
+mkdir -p "$ROOT/.git/hooks"
+
+# Pre-commit: fast staged-size + syntax check.
+cat > "$ROOT/.git/hooks/pre-commit" <<'SH'
 #!/usr/bin/env bash
-# htv pre-push hook — runs bin/review. Fail aborts the push.
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/bin/review" --staged
+SH
+chmod +x "$ROOT/.git/hooks/pre-commit"
+
+# Pre-push: full suite.
+cat > "$ROOT/.git/hooks/pre-push" <<'SH'
+#!/usr/bin/env bash
 set -e
 ROOT="$(git rev-parse --show-toplevel)"
 exec "$ROOT/bin/review"
 SH
-chmod +x "$HOOK"
-echo "installed: $HOOK"
+chmod +x "$ROOT/.git/hooks/pre-push"
+
+echo "installed: .git/hooks/pre-commit  (--staged)"
+echo "installed: .git/hooks/pre-push    (full)"

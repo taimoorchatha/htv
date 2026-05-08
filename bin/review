@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """bin/review — local code review gate.
 
-Run before committing / pushing. Also installed as a git pre-push hook
+Run before committing / pushing. Installed as pre-commit + pre-push hooks
 by `bin/install-hooks`.
 
 Checks, in order:
@@ -9,7 +9,12 @@ Checks, in order:
   2. pyflakes (if installed), with a small allow-list for side-effect imports
   3. Overlong functions  — warn > 60 LOC, fail > 100 LOC
   4. Duplicate function bodies across files  — fail on any dup
-  5. Symbol outline dump (informational)
+  5. Commit size  — fail if staged/pushed commit > 150 LOC prod OR > 150 LOC test
+  6. Symbol outline dump (informational)
+
+Usage:
+  bin/review              full suite (pre-push / manual)
+  bin/review --staged     only syntax + staged commit-size (pre-commit)
 
 Exit status: 0 on pass, 1 on any hard failure.
 """
@@ -26,6 +31,8 @@ from pathlib import Path
 
 HARD_FAIL_LOC = 100
 SOFT_WARN_LOC = 60
+COMMIT_PROD_LIMIT = 150
+COMMIT_TEST_LIMIT = 150
 
 # Names pyflakes will flag that we know are deliberate side-effect imports.
 PYFLAKES_ALLOWED = {
@@ -210,19 +217,100 @@ def outline(root: Path, files: list[Path]) -> None:
             print(f"    L{lineno:<5} {desc}")
 
 
+# ---- Commit-size check -----------------------------------------------
+
+def _is_test_path(path: str) -> bool:
+    parts = Path(path).parts
+    if any(p in ("tests", "test", "__tests__") for p in parts):
+        return True
+    name = Path(path).name
+    return name.startswith("test_") or name.endswith("_test.py")
+
+
+def _git(*args: str) -> str:
+    out = subprocess.run(["git", *args], capture_output=True, text=True)
+    return out.stdout if out.returncode == 0 else ""
+
+
+def _parse_numstat(text: str) -> tuple[int, int]:
+    """(prod_ins, test_ins) from `git diff --numstat` output."""
+    prod = test = 0
+    for ln in text.splitlines():
+        parts = ln.split("\t")
+        if len(parts) != 3:
+            continue
+        ins, _dels, path = parts
+        if ins == "-":  # binary
+            continue
+        try:
+            n = int(ins)
+        except ValueError:
+            continue
+        if _is_test_path(path):
+            test += n
+        else:
+            prod += n
+    return prod, test
+
+
+def _report_size(label: str, prod: int, test: int) -> int:
+    fail = 0
+    for kind, n, limit in (("prod", prod, COMMIT_PROD_LIMIT), ("test", test, COMMIT_TEST_LIMIT)):
+        if n > limit:
+            Log.err(f"{label}  {kind:<5} +{n} LOC  (limit ~{limit}) — split the commit")
+            fail += 1
+        else:
+            Log.ok(f"{label}  {kind:<5} +{n} LOC")
+    return fail
+
+
+def check_staged_size() -> int:
+    Log.hdr("commit size (staged)")
+    prod, test = _parse_numstat(_git("diff", "--cached", "--numstat"))
+    if prod == 0 and test == 0:
+        Log.ok("no staged changes")
+        return 0
+    return _report_size("staged", prod, test)
+
+
+def check_push_size() -> int:
+    """Check each outgoing commit in @{upstream}..HEAD separately."""
+    Log.hdr("commit size (outgoing)")
+    commits = _git("rev-list", "--reverse", "@{upstream}..HEAD").split()
+    if not commits:
+        Log.ok("no outgoing commits")
+        return 0
+    fail = 0
+    for c in commits:
+        prod, test = _parse_numstat(_git("diff", "--numstat", f"{c}~1", c))
+        fail += _report_size(c[:7], prod, test)
+    return fail
+
+
 # ---- Entry -----------------------------------------------------------
 
 def main() -> int:
     root = find_root()
     os.chdir(root)
+    staged_only = "--staged" in sys.argv[1:]
     files = py_files(root)
-    Log.hdr(f"htv review — {len(files)} python files, {sum(len(f.read_text().splitlines()) for f in files)} total LOC")
 
+    if staged_only:
+        Log.hdr(f"htv review — staged mode  ({len(files)} files)")
+        fail = check_syntax(files) + check_staged_size()
+        print()
+        tag = "fail" if fail else "clean"
+        col = Log.RED if fail else Log.GREEN
+        print(f"{col}{Log.BOLD}review: {tag}{Log.RESET}")
+        return 1 if fail else 0
+
+    Log.hdr(f"htv review — {len(files)} python files, {sum(len(f.read_text().splitlines()) for f in files)} total LOC")
     fail = 0
     fail += check_syntax(files)
     fail += check_pyflakes(root, files)
     fail += check_function_length(root, files)
     fail += check_duplicates(root, files)
+    fail += check_push_size()
     outline(root, files)
 
     print()
