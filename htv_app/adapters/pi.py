@@ -29,6 +29,7 @@ import time
 from .base import Adapter, register
 from ..proc import ProcIndex
 from ..session import SessionRow
+from ._util import count_lines as _count_lines, iso_from_mtime as _iso_from_mtime
 
 _TITLE_LEN = 80
 _UUID_RE = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.I)
@@ -97,23 +98,6 @@ class PiAdapter(Adapter):
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
-
-def _count_lines(path: str) -> int:
-    if not os.path.exists(path):
-        return 0
-    try:
-        with open(path, "rb") as f:
-            return sum(1 for _ in f)
-    except OSError:
-        return 0
-
-
-def _iso_from_mtime(mtime: float) -> str:
-    if not mtime:
-        return ""
-    from datetime import datetime, timezone
-    return datetime.fromtimestamp(mtime, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-
 
 def _sid_from_filename(name: str) -> str:
     """Pi filenames look like: 2026-05-08T15-39-05-932Z_019e083e-114c-732d-ac92-44f844a801a7.jsonl"""

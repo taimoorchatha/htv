@@ -19,6 +19,7 @@ import os
 from .base import Adapter, register
 from ..proc import ProcIndex
 from ..session import SessionRow
+from ._util import count_lines as _count_lines
 
 
 class KiroAdapter(Adapter):
@@ -81,16 +82,6 @@ class KiroAdapter(Adapter):
 
     def tail_entries(self, row: SessionRow, n: int = 10000) -> list[tuple[str, str]]:
         return _parse_kiro_jsonl(row.jsonl, n)
-
-
-def _count_lines(path: str) -> int:
-    if not os.path.exists(path):
-        return 0
-    try:
-        with open(path, "rb") as f:
-            return sum(1 for _ in f)
-    except OSError:
-        return 0
 
 
 # Kind label for rendering, like kirotv's

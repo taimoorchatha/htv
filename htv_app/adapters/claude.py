@@ -21,6 +21,7 @@ import time
 from .base import Adapter, register
 from ..proc import ProcIndex
 from ..session import SessionRow
+from ._util import iso_from_mtime as _iso_from_mtime
 
 # Max length for a title snippet pulled from the jsonl.
 _TITLE_LEN = 80
@@ -120,13 +121,6 @@ def _count_conversation(path: str) -> int:
     except OSError:
         pass
     return n
-
-
-def _iso_from_mtime(mtime: float) -> str:
-    if not mtime:
-        return ""
-    from datetime import datetime, timezone
-    return datetime.fromtimestamp(mtime, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _decode_dashed_dir(name: str) -> str:
