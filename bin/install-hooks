@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# bin/install-hooks — wire bin/review as the git pre-push hook.
+# Safe to re-run: overwrites the hook.
+set -eu
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HOOK="$ROOT/.git/hooks/pre-push"
+mkdir -p "$(dirname "$HOOK")"
+cat > "$HOOK" <<'SH'
+#!/usr/bin/env bash
+# htv pre-push hook — runs bin/review. Fail aborts the push.
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/bin/review"
+SH
+chmod +x "$HOOK"
+echo "installed: $HOOK"

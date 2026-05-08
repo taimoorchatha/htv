@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""bin/review — local code review gate.
+
+Run before committing / pushing. Also installed as a git pre-push hook
+by `bin/install-hooks`.
+
+Checks, in order:
+  1. py_compile every .py  (syntax)
+  2. pyflakes (if installed), with a small allow-list for side-effect imports
+  3. Overlong functions  — warn > 60 LOC, fail > 100 LOC
+  4. Duplicate function bodies across files  — fail on any dup
+  5. Symbol outline dump (informational)
+
+Exit status: 0 on pass, 1 on any hard failure.
+"""
+from __future__ import annotations
+
+import ast
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+HARD_FAIL_LOC = 100
+SOFT_WARN_LOC = 60
+
+# Names pyflakes will flag that we know are deliberate side-effect imports.
+PYFLAKES_ALLOWED = {
+    "'.adapters as _adapters_pkg' imported but unused",
+    "'.kiro as _kiro' imported but unused",
+    "'.claude as _claude' imported but unused",
+    "'.pi as _pi' imported but unused",
+}
+
+
+# ---- UI --------------------------------------------------------------
+
+class Log:
+    RESET = "\033[0m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    RED = "\033[31m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+
+    @staticmethod
+    def hdr(name: str) -> None:
+        print(f"\n{Log.BOLD}── {name} ──{Log.RESET}")
+
+    @staticmethod
+    def ok(msg: str) -> None:
+        print(f"  {Log.GREEN}✓{Log.RESET} {msg}")
+
+    @staticmethod
+    def warn(msg: str) -> None:
+        print(f"  {Log.YELLOW}⚠{Log.RESET} {msg}")
+
+    @staticmethod
+    def err(msg: str) -> None:
+        print(f"  {Log.RED}✗{Log.RESET} {msg}")
+
+    @staticmethod
+    def dim(msg: str) -> None:
+        print(f"    {Log.DIM}{msg}{Log.RESET}")
+
+
+# ---- Discovery -------------------------------------------------------
+
+def find_root() -> Path:
+    here = Path(__file__).resolve()
+    for p in [here.parent.parent, *here.parents]:
+        if (p / "pyproject.toml").exists():
+            return p
+    return here.parent.parent
+
+
+def py_files(root: Path) -> list[Path]:
+    return sorted(
+        f for f in root.rglob("*.py")
+        if "__pycache__" not in f.parts
+        and ".git" not in f.parts
+        and "test-data" not in f.parts
+        and "build" not in f.parts
+    )
+
+
+# ---- Checks ----------------------------------------------------------
+
+def check_syntax(files: list[Path]) -> int:
+    Log.hdr("syntax (py_compile)")
+    fail = 0
+    for f in files:
+        try:
+            compile(f.read_text(), f, "exec")
+        except SyntaxError as e:
+            Log.err(f"{f}:{e.lineno}: {e.msg}")
+            fail += 1
+    if not fail:
+        Log.ok(f"all {len(files)} files compile")
+    return fail
+
+
+def check_pyflakes(root: Path, files: list[Path]) -> int:
+    Log.hdr("pyflakes")
+    if not shutil.which("pyflakes"):
+        Log.warn("pyflakes not installed — skipping  (pip install pyflakes)")
+        return 0
+    out = subprocess.run(["pyflakes", str(root / "htv_app")], capture_output=True, text=True)
+    lines = (out.stdout + out.stderr).splitlines()
+    real_errors = [ln for ln in lines if ln and not any(ok in ln for ok in PYFLAKES_ALLOWED)]
+    for ln in real_errors:
+        Log.err(ln)
+    if real_errors:
+        return len(real_errors)
+    suppressed = [ln for ln in lines if any(ok in ln for ok in PYFLAKES_ALLOWED)]
+    if suppressed:
+        Log.ok(f"clean (suppressed {len(suppressed)} known side-effect imports)")
+    else:
+        Log.ok("clean")
+    return 0
+
+
+def walk_top_level_funcs(root: Path, files: list[Path]):
+    """Yield (file, node, source_segment) for every top-level function and method."""
+    for f in files:
+        src = f.read_text()
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        # Top-level functions AND methods of top-level classes.
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield f, node, ast.get_source_segment(src, node) or ""
+            elif isinstance(node, ast.ClassDef):
+                for m in ast.iter_child_nodes(node):
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        yield f, m, ast.get_source_segment(src, m) or ""
+
+
+def check_function_length(root: Path, files: list[Path]) -> int:
+    Log.hdr("function length")
+    warn = fail = 0
+    offenders: list[tuple[int, str, str]] = []
+    for f, node, body in walk_top_level_funcs(root, files):
+        lines = (node.end_lineno or node.lineno) - node.lineno + 1
+        if lines >= HARD_FAIL_LOC:
+            offenders.append((lines, f"{f.relative_to(root)}::{node.name}", "fail"))
+            fail += 1
+        elif lines >= SOFT_WARN_LOC:
+            offenders.append((lines, f"{f.relative_to(root)}::{node.name}", "warn"))
+            warn += 1
+    for lines, loc, level in sorted(offenders, reverse=True):
+        (Log.err if level == "fail" else Log.warn)(f"{loc:<50} {lines} LOC")
+    if not offenders:
+        Log.ok(f"all functions < {SOFT_WARN_LOC} LOC")
+    elif not fail:
+        Log.ok(f"no functions ≥ {HARD_FAIL_LOC} LOC (but {warn} warnings)")
+    return fail
+
+
+def check_duplicates(root: Path, files: list[Path]) -> int:
+    Log.hdr("duplicate function bodies")
+    buckets: dict[str, list[tuple[Path, str, int]]] = defaultdict(list)
+    for f, node, body in walk_top_level_funcs(root, files):
+        if not body.strip():
+            continue
+        # Normalize: drop def line (names can differ); strip whitespace per line.
+        norm = "\n".join(ln.strip() for ln in body.splitlines()[1:] if ln.strip())
+        if len(norm) < 40:   # ignore trivially short bodies
+            continue
+        h = hashlib.md5(norm.encode()).hexdigest()[:10]
+        lines = (node.end_lineno or node.lineno) - node.lineno + 1
+        buckets[h].append((f, node.name, lines))
+    fail = 0
+    for h, locs in buckets.items():
+        if len(locs) > 1:
+            fail += 1
+            Log.err(f"{h}: identical body in {len(locs)} places")
+            for f, name, n in locs:
+                Log.dim(f"{f.relative_to(root)}::{name}  ({n} LOC)")
+    if not fail:
+        Log.ok("no cross-file duplicates")
+    return fail
+
+
+def outline(root: Path, files: list[Path]) -> None:
+    Log.hdr("symbol outline (informational)")
+    for f in files:
+        src = f.read_text()
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        items: list[tuple[int, str]] = []
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                kind = "class" if isinstance(node, ast.ClassDef) else "func"
+                lines = (node.end_lineno or node.lineno) - node.lineno + 1
+                items.append((node.lineno, f"{kind} {node.name} ({lines})"))
+        if not items:
+            continue
+        rel = f.relative_to(root)
+        header = f"{rel}  ({len(src.splitlines())} LOC)"
+        print(f"  {Log.BOLD}{header}{Log.RESET}")
+        for lineno, desc in items:
+            print(f"    L{lineno:<5} {desc}")
+
+
+# ---- Entry -----------------------------------------------------------
+
+def main() -> int:
+    root = find_root()
+    os.chdir(root)
+    files = py_files(root)
+    Log.hdr(f"htv review — {len(files)} python files, {sum(len(f.read_text().splitlines()) for f in files)} total LOC")
+
+    fail = 0
+    fail += check_syntax(files)
+    fail += check_pyflakes(root, files)
+    fail += check_function_length(root, files)
+    fail += check_duplicates(root, files)
+    outline(root, files)
+
+    print()
+    if fail:
+        print(f"{Log.RED}{Log.BOLD}review: {fail} failure(s){Log.RESET}")
+        return 1
+    print(f"{Log.GREEN}{Log.BOLD}review: clean{Log.RESET}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
