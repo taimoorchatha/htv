@@ -41,6 +41,7 @@ class State:
     tab: str = TAB_ALL
     show_active: bool = True
     tag_filter: str = ""        # "" = no tag filter active
+    search_query: str = ""      # "" = no fuzzy search
     last_refresh: float = 0.0
 
 
@@ -106,6 +107,15 @@ def _refresh(state: State) -> None:
     state.last_refresh = time.time()
 
 
+def _subseq_match(needle: str, haystack: str) -> bool:
+    """Fuzzy: are all chars of `needle` in `haystack` in order? Case-sensitive caller."""
+    i = 0
+    for c in haystack:
+        if i < len(needle) and c == needle[i]:
+            i += 1
+    return i == len(needle)
+
+
 def _apply_filters(state: State) -> None:
     out = state.rows_all
     if state.tab != TAB_ALL:
@@ -115,6 +125,16 @@ def _apply_filters(state: State) -> None:
     if state.tag_filter:
         tag = state.tag_filter.lower()
         out = [r for r in out if any(t.lower() == tag for t in r.tags)]
+    if state.search_query:
+        q = state.search_query.lower()
+        exact, subseq = [], []
+        for r in out:
+            hay = f"{r.name} {r.display_title} {r.cwd} {r.sid} {r.harness}".lower()
+            if q in hay:
+                exact.append(r)
+            elif _subseq_match(q, hay):
+                subseq.append(r)
+        out = exact + subseq
     state.rows = out
     state.sel = min(state.sel, max(0, len(state.rows) - 1))
 
@@ -218,13 +238,15 @@ def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) ->
         status = state.msg
     else:
         bits = [f"{len(state.rows)} shown", f"{sum(1 for r in state.rows if r.active)} active"]
+        if state.search_query:
+            bits.insert(0, f"search={state.search_query!r}")
         if state.tag_filter:
             bits.insert(0, f"tag={state.tag_filter}")
-        elif state.rows and state.rows[state.sel].tags:
+        if not state.search_query and not state.tag_filter and state.rows and state.rows[state.sel].tags:
             bits.append("tags: " + " ".join("#" + t for t in state.rows[state.sel].tags))
         status = " · ".join(bits)
     stdscr.addnstr(h - 2, 0, status.ljust(w - 1), w - 1, curses.color_pair(pairs["_footer"]))
-    foot_text = " ↑↓ nav · ⏎ resume · t tmux · v view · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
+    foot_text = " ↑↓ nav · ⏎ resume · t tmux · v view · / search · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
     foot = _marquee(foot_text, w - 1, time.time())
     stdscr.addnstr(h - 1, 0, foot, w - 1, curses.A_REVERSE)
 
@@ -298,6 +320,41 @@ def _tail_handle_key(c: int, scroll: int, follow: bool,
     return scroll, follow, False
 
 
+def _tail_dispatch_search(c: int, stdscr, sq: str, matches: list[int], match_idx: int,
+                          scroll: int, follow: bool, body_h: int,
+                          rendered: list[tuple[int, str]]) -> tuple:
+    """Handle /, n, N, Esc in the tail view. Returns updated state + `consumed` flag.
+    consumed=True means the key was handled; caller should skip the generic tail handler."""
+    if c == ord('/'):
+        new_q = _prompt_text(stdscr, "find in conversation", default=sq)
+        if new_q is not None:
+            sq = new_q.strip()
+            matches = _find_matches(rendered, sq)
+            match_idx = 0
+            if matches:
+                scroll = max(0, matches[0] - body_h // 2); follow = False
+        return sq, matches, match_idx, scroll, follow, True
+    if c == ord('n') and matches:
+        match_idx = (match_idx + 1) % len(matches)
+        scroll = max(0, matches[match_idx] - body_h // 2); follow = False
+        return sq, matches, match_idx, scroll, follow, True
+    if c == ord('N') and matches:
+        match_idx = (match_idx - 1) % len(matches)
+        scroll = max(0, matches[match_idx] - body_h // 2); follow = False
+        return sq, matches, match_idx, scroll, follow, True
+    if c == 27 and sq:  # Esc clears the active search before falling back to quit
+        return "", [], 0, scroll, follow, True
+    return sq, matches, match_idx, scroll, follow, False
+
+
+def _find_matches(rendered: list[tuple[int, str]], query: str) -> list[int]:
+    """Return line indices (in `rendered`) containing `query` (case-insensitive)."""
+    if not query:
+        return []
+    q = query.lower()
+    return [i for i, (_, line) in enumerate(rendered) if q in line.lower()]
+
+
 def _tail_view(stdscr, state: State, pairs: dict[str, int], row: SessionRow) -> None:
     adapter = state.adapters.get(row.harness)
     if adapter is None:
@@ -307,6 +364,10 @@ def _tail_view(stdscr, state: State, pairs: dict[str, int], row: SessionRow) -> 
     follow = True
     scroll = 0
     rendered: list[tuple[int, str]] = []
+    # In-conversation search state
+    search_query = ""
+    matches: list[int] = []
+    match_idx = 0
 
     while True:
         try:
@@ -318,26 +379,39 @@ def _tail_view(stdscr, state: State, pairs: dict[str, int], row: SessionRow) -> 
         if mtime != last_mtime:
             last_mtime = mtime
             rendered = _tail_render(adapter, row, pairs, max(20, w - 10))
+            matches = _find_matches(rendered, search_query)
+            match_idx = min(match_idx, len(matches) - 1) if matches else 0
             if follow:
                 scroll = max(0, len(rendered) - body_h)
 
         stdscr.erase()
         head = f" {row.display_title[:w - 40]}  [{row.sid[:8]}]  {row.harness}  {'ACTIVE' if row.active else 'idle'} "
         stdscr.addnstr(0, 0, head.ljust(w - 1), w - 1, curses.A_REVERSE)
+        match_set = set(matches)
         end = min(len(rendered), scroll + body_h)
         for i, (attr, line) in enumerate(rendered[scroll:end]):
+            draw_attr = attr | (curses.A_STANDOUT if (scroll + i) in match_set else 0)
             try:
-                stdscr.addnstr(1 + i, 0, line[:w - 1], w - 1, attr)
+                stdscr.addnstr(1 + i, 0, line[:w - 1], w - 1, draw_attr)
             except curses.error:
                 pass
-        foll = "FOLLOW" if follow else f"{scroll + 1}-{end}/{len(rendered)}"
-        foot = f" ↑↓ scroll · g/G top/bot · f follow[{foll}] · q back "
+        if search_query:
+            foot = f" /{search_query!r} · n/N next/prev [{match_idx + 1 if matches else 0}/{len(matches)}] · Esc clear · q back "
+        else:
+            foll = "FOLLOW" if follow else f"{scroll + 1}-{end}/{len(rendered)}"
+            foot = f" ↑↓ scroll · g/G top/bot · f follow[{foll}] · / search · q back "
         stdscr.addnstr(h - 1, 0, foot.ljust(w - 1), w - 1, curses.A_REVERSE)
         stdscr.refresh()
 
         c = stdscr.getch()
         if c == -1:
             time.sleep(0.2)
+            continue
+        # Try search keys first; they take precedence over generic tail keys.
+        sq, matches, match_idx, scroll, follow, consumed = _tail_dispatch_search(
+            c, stdscr, search_query, matches, match_idx, scroll, follow, body_h, rendered)
+        search_query = sq
+        if consumed:
             continue
         scroll, follow, quit_ = _tail_handle_key(c, scroll, follow, len(rendered), body_h)
         if quit_:
@@ -527,6 +601,20 @@ def _focus_bare_tty(state: State, row: SessionRow) -> None:
     return None
 
 
+def _handle_search(stdscr, state: State) -> None:
+    """/: fuzzy search over name/title/cwd/sid/harness. Empty clears."""
+    q = _prompt_text(stdscr, "search (empty to clear)", default=state.search_query)
+    if q is None:
+        state.msg = "· cancelled"; return
+    state.search_query = q.strip()
+    _apply_filters(state)
+    state.sel = 0
+    if state.search_query:
+        state.msg = f"· search={state.search_query!r}  {len(state.rows)} match(es)"
+    else:
+        state.msg = "· search cleared"
+
+
 def _handle_kill(stdscr, state: State) -> None:
     if not state.rows:
         return
@@ -584,8 +672,14 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
             _handle_tags(stdscr, state)
         elif c == ord('F'):
             _handle_tag_filter(stdscr, state)
-        elif c == 27:  # Esc — clear tag filter first if set, else ignore
-            if state.tag_filter:
+        elif c == ord('/'):
+            _handle_search(stdscr, state)
+        elif c == 27:  # Esc — clear search → tag → (none)
+            if state.search_query:
+                state.search_query = ""
+                _apply_filters(state)
+                state.msg = "· search cleared"
+            elif state.tag_filter:
                 state.tag_filter = ""
                 _apply_filters(state)
                 state.msg = "· filter cleared"
