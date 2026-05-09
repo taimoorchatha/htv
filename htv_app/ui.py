@@ -21,7 +21,7 @@ from .adapters import Adapter, get_adapter_cls
 from .config import AppConfig
 from .proc import ProcIndex
 from .session import SessionRow
-from . import sidecar
+from . import sidecar, tmux_util
 
 
 TAB_ALL = "all"
@@ -224,7 +224,7 @@ def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) ->
             bits.append("tags: " + " ".join("#" + t for t in state.rows[state.sel].tags))
         status = " · ".join(bits)
     stdscr.addnstr(h - 2, 0, status.ljust(w - 1), w - 1, curses.color_pair(pairs["_footer"]))
-    foot_text = " ↑↓ nav · ⏎ resume · v view · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
+    foot_text = " ↑↓ nav · ⏎ resume · t tmux · v view · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
     foot = _marquee(foot_text, w - 1, time.time())
     stdscr.addnstr(h - 1, 0, foot, w - 1, curses.A_REVERSE)
 
@@ -472,6 +472,61 @@ def _handle_tag_filter(stdscr, state: State) -> None:
     state.msg = f"· tag={state.tag_filter!r}" if state.tag_filter else "· filter cleared"
 
 
+def _handle_tmux(stdscr, state: State) -> Optional[tuple[str, Any]]:
+    """`t` key: attach to existing tmux pane (active sessions), or create a new
+    tmux session + resume there (idle sessions)."""
+    if not state.rows:
+        return None
+    row = state.rows[state.sel]
+
+    # Active + in tmux → just switch/attach to that pane.
+    if row.active and row.pid:
+        pane = tmux_util.find_tmux_pane(row.pid)
+        if pane:
+            return ("tmux-attach", {"target": pane, "is_pane": True})
+        # Active but bare tty — try the configured focus command.
+        return _focus_bare_tty(state, row)
+
+    # Idle → create a new tmux session running the resume cmd.
+    adapter = state.adapters.get(row.harness)
+    if adapter is None:
+        state.msg = "· no adapter"; return None
+    argv = adapter.resume_argv(row)
+    if not argv:
+        state.msg = "· no resume_cmd configured"; return None
+    default = (row.name or f"{row.harness}-{row.sid[:8]}").replace(" ", "-")
+    name = _prompt_text(stdscr, "tmux session name", default=default)
+    if not name:
+        state.msg = "· cancelled"; return None
+    # Sanitize: tmux session names can't contain . : or whitespace.
+    name = name.replace(".", "-").replace(":", "-").replace(" ", "-")
+    ok, msg = tmux_util.create_session(name, row.cwd, argv)
+    if not ok:
+        state.msg = f"· tmux: {msg}"; return None
+    return ("tmux-attach", {"target": name, "is_pane": False})
+
+
+def _focus_bare_tty(state: State, row: SessionRow) -> None:
+    """Active session that isn't in tmux — try the configured focus command."""
+    tty = tmux_util.tty_of(row.pid or 0)
+    cmd = state.cfg.focus_command
+    if not cmd:
+        state.msg = f"· active in pid {row.pid} tty {tty or '?'} — no focus cmd configured"
+        return None
+    placeholders = {"pid": str(row.pid or ""), "tty": tty, "title": row.display_title, "comm": row.harness}
+    try:
+        argv = [a.format(**placeholders) for a in cmd]
+        import subprocess
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=3)
+        if r.returncode == 0:
+            state.msg = f"· focused pid {row.pid} (tty {tty or '?'})"
+        else:
+            state.msg = f"· focus failed: {(r.stderr or 'nonzero').strip()[:60]}"
+    except Exception as e:
+        state.msg = f"· focus error: {e}"
+    return None
+
+
 def _handle_kill(stdscr, state: State) -> None:
     if not state.rows:
         return
@@ -537,6 +592,10 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
         elif c == ord('v') and state.rows:
             _tail_view(stdscr, state, pairs, state.rows[state.sel])
             stdscr.nodelay(True)
+        elif c == ord('t'):
+            action = _handle_tmux(stdscr, state)
+            if action is not None:
+                return action
         elif c in (curses.KEY_ENTER, 10, 13):
             action = _handle_enter(state)
             if action is not None:
