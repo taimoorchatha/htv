@@ -105,13 +105,25 @@ def cmd_tui(args: argparse.Namespace) -> int:
                 os.chdir(cwd)
         except OSError as e:
             print(f"chdir {cwd!r} failed: {e}", file=sys.stderr)
-        # Replace htv with the harness CLI. When the session exits, user returns to their shell.
         try:
             os.execvp(argv[0], argv)
         except FileNotFoundError:
             print(f"not found: {argv[0]!r}", file=sys.stderr)
             return 127
-    # Future action kinds (tmux-attach, focus, etc.) land here.
+
+    if kind == "tmux-attach":
+        target = payload.get("target")
+        if not target:
+            return 2
+        # Inside tmux: switch-client to the pane/session. Outside: attach.
+        tmux_cmd = ["tmux", "switch-client", "-t", target] if os.environ.get("TMUX") \
+                   else ["tmux", "attach-session", "-t", target.split(":", 1)[0]]
+        try:
+            os.execvp(tmux_cmd[0], tmux_cmd)
+        except FileNotFoundError:
+            print("tmux not installed", file=sys.stderr)
+            return 127
+
     return 0
 
 
