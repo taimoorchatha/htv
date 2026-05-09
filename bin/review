@@ -34,6 +34,13 @@ SOFT_WARN_LOC = 60
 COMMIT_PROD_LIMIT = 150
 COMMIT_TEST_LIMIT = 150
 
+# Only these extensions count toward the commit-size cap. Docs, config,
+# data, shell scripts, etc. are unbounded (same rule as the global hook
+# in agent-config/git-hooks-global/pre-commit).
+CODE_EXTS = frozenset({".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs",
+                       ".java", ".kt", ".swift", ".rb", ".php",
+                       ".c", ".cpp", ".h", ".hpp"})
+
 # Names pyflakes will flag that we know are deliberate side-effect imports.
 PYFLAKES_ALLOWED = {
     "'.adapters as _adapters_pkg' imported but unused",
@@ -246,6 +253,8 @@ def _parse_numstat(text: str) -> tuple[int, int]:
             n = int(ins)
         except ValueError:
             continue
+        if Path(path).suffix.lower() not in CODE_EXTS:
+            continue  # skip docs, config, data, shell
         if _is_test_path(path):
             test += n
         else:
