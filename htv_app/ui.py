@@ -40,6 +40,7 @@ class State:
     msg: str = ""                                                 # transient status
     tab: str = TAB_ALL
     show_active: bool = True
+    tag_filter: str = ""        # "" = no tag filter active
     last_refresh: float = 0.0
 
 
@@ -111,6 +112,9 @@ def _apply_filters(state: State) -> None:
         out = [r for r in out if r.harness == state.tab]
     if not state.show_active:
         out = [r for r in out if not r.active]
+    if state.tag_filter:
+        tag = state.tag_filter.lower()
+        out = [r for r in out if any(t.lower() == tag for t in r.tags)]
     state.rows = out
     state.sel = min(state.sel, max(0, len(state.rows) - 1))
 
@@ -199,10 +203,18 @@ def _draw_row(stdscr, y: int, r: SessionRow, selected: bool,
 
 
 def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) -> None:
-    """Two-line footer: status + keybindings."""
-    status = state.msg or f"{len(state.rows)} shown · {sum(1 for r in state.rows if r.active)} active"
+    """Two-line footer: status (with filter chip or selected-row tags) + keybindings."""
+    if state.msg:
+        status = state.msg
+    else:
+        bits = [f"{len(state.rows)} shown", f"{sum(1 for r in state.rows if r.active)} active"]
+        if state.tag_filter:
+            bits.insert(0, f"tag={state.tag_filter}")
+        elif state.rows and state.rows[state.sel].tags:
+            bits.append("tags: " + " ".join("#" + t for t in state.rows[state.sel].tags))
+        status = " · ".join(bits)
     stdscr.addnstr(h - 2, 0, status.ljust(w - 1), w - 1, curses.color_pair(pairs["_footer"]))
-    foot = " ↑↓ nav · ⏎ resume · v view · r rename · a active · 1-4 tabs · K kill · q quit "
+    foot = " ↑↓ nav · ⏎ resume · v view · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
     stdscr.addnstr(h - 1, 0, foot.ljust(w - 1), w - 1, curses.A_REVERSE)
 
 
@@ -420,6 +432,35 @@ def _handle_enter(state: State) -> Optional[tuple[str, Any]]:
     return ("resume", {"cwd": row.cwd, "argv": argv, "sid": row.sid, "harness": row.harness})
 
 
+def _handle_tags(stdscr, state: State) -> None:
+    if not state.rows:
+        return
+    row = state.rows[state.sel]
+    raw = _prompt_text(stdscr, "tags (comma-separated)", default=", ".join(row.tags))
+    if raw is None:
+        state.msg = "· cancelled"
+        return
+    tags = [t.strip() for t in raw.split(",") if t.strip()]
+    try:
+        sidecar.save(row.jsonl, name=row.name, tags=tags)
+    except OSError as e:
+        state.msg = f"· save failed: {e}"
+        return
+    row.tags = tags
+    state.msg = f"· tags: {', '.join(tags) or '(cleared)'}"
+
+
+def _handle_tag_filter(stdscr, state: State) -> None:
+    raw = _prompt_text(stdscr, "filter by tag (empty to clear)", default=state.tag_filter)
+    if raw is None:
+        state.msg = "· cancelled"
+        return
+    state.tag_filter = raw.strip()
+    _apply_filters(state)
+    state.sel = 0
+    state.msg = f"· tag={state.tag_filter!r}" if state.tag_filter else "· filter cleared"
+
+
 def _handle_kill(stdscr, state: State) -> None:
     if not state.rows:
         return
@@ -473,6 +514,15 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
             state.msg = f"· show_active = {state.show_active}"
         elif c == ord('r'):
             _handle_rename(stdscr, state)
+        elif c == ord('#'):
+            _handle_tags(stdscr, state)
+        elif c == ord('F'):
+            _handle_tag_filter(stdscr, state)
+        elif c == 27:  # Esc — clear tag filter first if set, else ignore
+            if state.tag_filter:
+                state.tag_filter = ""
+                _apply_filters(state)
+                state.msg = "· filter cleared"
         elif c == ord('v') and state.rows:
             _tail_view(stdscr, state, pairs, state.rows[state.sel])
             stdscr.nodelay(True)
