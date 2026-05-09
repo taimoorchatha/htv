@@ -25,3 +25,8 @@ chmod +x "$ROOT/.git/hooks/pre-push"
 
 echo "installed: .git/hooks/pre-commit  (--staged)"
 echo "installed: .git/hooks/pre-push    (full)"
+
+# A global core.hooksPath (e.g. set by agent-config) would shadow these hooks.
+# Override locally so htv always runs bin/review.
+git -C "$ROOT" config --local core.hooksPath .git/hooks
+echo "set:       local core.hooksPath = .git/hooks  (overrides any global)"
