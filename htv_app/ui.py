@@ -21,6 +21,7 @@ from .adapters import Adapter, get_adapter_cls
 from .config import AppConfig
 from .proc import ProcIndex
 from .session import SessionRow
+from . import sidecar
 
 
 TAB_ALL = "all"
@@ -92,6 +93,11 @@ def _refresh(state: State) -> None:
             rows.extend(adapter.list_sessions(state.procs))
         except Exception as e:
             state.msg = f"· {adapter.name} error: {type(e).__name__}"
+    # Attach user-assigned sidecar name/tags (best-effort, missing sidecars → empty).
+    for r in rows:
+        meta = sidecar.load(r.jsonl)
+        r.name = meta.get("name", "")
+        r.tags = meta.get("tags", [])
     rows.sort(key=lambda r: r.updated, reverse=True)
     rows.sort(key=lambda r: 0 if r.active else 1)
     state.rows_all = rows
@@ -196,7 +202,7 @@ def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) ->
     """Two-line footer: status + keybindings."""
     status = state.msg or f"{len(state.rows)} shown · {sum(1 for r in state.rows if r.active)} active"
     stdscr.addnstr(h - 2, 0, status.ljust(w - 1), w - 1, curses.color_pair(pairs["_footer"]))
-    foot = " ↑↓ nav · ⏎ resume · v view · a active · 1-4 tabs · r refresh · K kill · q quit "
+    foot = " ↑↓ nav · ⏎ resume · v view · r rename · a active · 1-4 tabs · K kill · q quit "
     stdscr.addnstr(h - 1, 0, foot.ljust(w - 1), w - 1, curses.A_REVERSE)
 
 
@@ -328,6 +334,55 @@ def _confirm(stdscr, prompt: str) -> bool:
     return c in (ord('y'), ord('Y'))
 
 
+def _prompt_text(stdscr, prompt: str, default: str = "") -> Optional[str]:
+    """Bottom-line text input. Returns the string on Enter, None on Esc."""
+    h, w = stdscr.getmaxyx()
+    curses.curs_set(1)
+    stdscr.nodelay(False)
+    buf = list(default)
+    pos = len(buf)
+    try:
+        while True:
+            line = f" {prompt}: {''.join(buf)}"
+            stdscr.addnstr(h - 1, 0, line.ljust(w - 1), w - 1, curses.A_REVERSE | curses.A_BOLD)
+            stdscr.move(h - 1, min(len(f" {prompt}: ") + pos, w - 2))
+            stdscr.refresh()
+            c = stdscr.getch()
+            if c in (10, 13, curses.KEY_ENTER):
+                return "".join(buf).strip()
+            if c == 27:
+                return None
+            if c in (curses.KEY_BACKSPACE, 127, 8):
+                if pos > 0:
+                    buf.pop(pos - 1); pos -= 1
+            elif c == curses.KEY_LEFT and pos > 0:
+                pos -= 1
+            elif c == curses.KEY_RIGHT and pos < len(buf):
+                pos += 1
+            elif 32 <= c < 127:
+                buf.insert(pos, chr(c)); pos += 1
+    finally:
+        curses.curs_set(0)
+        stdscr.nodelay(True)
+
+
+def _handle_rename(stdscr, state: State) -> None:
+    if not state.rows:
+        return
+    row = state.rows[state.sel]
+    new_name = _prompt_text(stdscr, "name", default=row.name)
+    if new_name is None:
+        state.msg = "· cancelled"
+        return
+    try:
+        sidecar.save(row.jsonl, name=new_name, tags=row.tags)
+    except OSError as e:
+        state.msg = f"· save failed: {e}"
+        return
+    row.name = new_name
+    state.msg = f"· renamed: {new_name or '(cleared)'}"
+
+
 def _switch_tab(c: int, state: State, tab_order: list[str],
                 tab_keys: dict[int, str]) -> bool:
     """Handle tab-switch keys. Returns True if the key was consumed."""
@@ -417,7 +472,7 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
             _apply_filters(state)
             state.msg = f"· show_active = {state.show_active}"
         elif c == ord('r'):
-            _refresh(state); state.msg = "· refreshed"
+            _handle_rename(stdscr, state)
         elif c == ord('v') and state.rows:
             _tail_view(stdscr, state, pairs, state.rows[state.sel])
             stdscr.nodelay(True)
