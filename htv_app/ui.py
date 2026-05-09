@@ -148,6 +148,16 @@ def _pulse_glyph(t: float) -> str:
     return "●" if (int(t * 1.4) % 2) == 0 else "○"
 
 
+def _marquee(text: str, width: int, now: float, speed: float = 4.0) -> str:
+    """Scroll `text` leftward through a window of `width` chars at `speed` chars/sec.
+    Seamless loop via a gap separator. If the text fits, return it padded."""
+    if len(text) <= width:
+        return text.ljust(width)
+    loop = text + "   ·   "
+    off = int(now * speed) % len(loop)
+    return (loop * 2)[off:off + width]
+
+
 # ---- Drawing -------------------------------------------------------------
 
 def _draw_tab_bar(stdscr, state: State, w: int) -> None:
@@ -214,8 +224,9 @@ def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) ->
             bits.append("tags: " + " ".join("#" + t for t in state.rows[state.sel].tags))
         status = " · ".join(bits)
     stdscr.addnstr(h - 2, 0, status.ljust(w - 1), w - 1, curses.color_pair(pairs["_footer"]))
-    foot = " ↑↓ nav · ⏎ resume · v view · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
-    stdscr.addnstr(h - 1, 0, foot.ljust(w - 1), w - 1, curses.A_REVERSE)
+    foot_text = " ↑↓ nav · ⏎ resume · v view · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
+    foot = _marquee(foot_text, w - 1, time.time())
+    stdscr.addnstr(h - 1, 0, foot, w - 1, curses.A_REVERSE)
 
 
 def _draw(stdscr, state: State, pairs: dict[str, int]) -> None:
