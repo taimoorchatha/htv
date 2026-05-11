@@ -130,7 +130,7 @@ def _apply_filters(state: State) -> None:
         q = state.search_query.lower()
         exact, subseq = [], []
         for r in out:
-            hay = f"{r.name} {r.display_title} {r.cwd} {r.sid} {r.harness}".lower()
+            hay = f"{r.name} {r.display_title} {r.cwd}".lower()
             if q in hay:
                 exact.append(r)
             elif _subseq_match(q, hay):
