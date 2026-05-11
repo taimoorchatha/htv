@@ -41,7 +41,8 @@ class State:
     tab: str = TAB_ALL
     show_active: bool = True
     tag_filter: str = ""        # "" = no tag filter active
-    search_query: str = ""      # "" = no fuzzy search
+    search_query: str = ""      # "" = no fuzzy search (committed)
+    search_mode: bool = False   # True when user is typing in the search box
     last_refresh: float = 0.0
 
 
@@ -233,7 +234,20 @@ def _draw_row(stdscr, y: int, r: SessionRow, selected: bool,
 
 
 def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) -> None:
-    """Two-line footer: status (with filter chip or selected-row tags) + keybindings."""
+    """Two-line footer. In search_mode: status summary + live / prompt with cursor.
+    Normal: status (filter chip / selected-row tags) + marquee keybindings."""
+    if state.search_mode:
+        summary = f"{len(state.rows)} match(es) · Enter to keep · Esc to clear"
+        stdscr.addnstr(h - 2, 0, summary.ljust(w - 1), w - 1, curses.color_pair(pairs["_footer"]))
+        prompt = f" /{state.search_query}"
+        stdscr.addnstr(h - 1, 0, prompt.ljust(w - 1), w - 1, curses.A_REVERSE | curses.A_BOLD)
+        try:
+            curses.curs_set(1)
+            stdscr.move(h - 1, min(len(prompt), w - 1))
+        except curses.error:
+            pass
+        return
+    curses.curs_set(0)
     if state.msg:
         status = state.msg
     else:
@@ -602,17 +616,33 @@ def _focus_bare_tty(state: State, row: SessionRow) -> None:
 
 
 def _handle_search(stdscr, state: State) -> None:
-    """/: fuzzy search over name/title/cwd/sid/harness. Empty clears."""
-    q = _prompt_text(stdscr, "search (empty to clear)", default=state.search_query)
-    if q is None:
-        state.msg = "· cancelled"; return
-    state.search_query = q.strip()
+    """/: enter live-search mode. _tui main loop routes subsequent keys to
+    _live_search_step until the user hits Enter or Esc."""
+    state.search_mode = True
+
+
+def _live_search_step(state: State, c: int) -> None:
+    """Handle one keystroke while in search_mode. Updates state.search_query
+    live and re-applies filters on every edit."""
+    if c in (10, 13, curses.KEY_ENTER):            # commit
+        state.search_mode = False
+        state.msg = (f"· search={state.search_query!r}  {len(state.rows)} match(es)"
+                     if state.search_query else "· search cleared")
+        return
+    if c == 27:                                    # Esc — cancel + clear
+        state.search_mode = False
+        state.search_query = ""
+        _apply_filters(state)
+        state.msg = "· search cleared"
+        return
+    if c in (curses.KEY_BACKSPACE, 127, 8):
+        state.search_query = state.search_query[:-1]
+    elif 32 <= c < 127:
+        state.search_query += chr(c)
+    else:
+        return                                     # ignore arrows / fn / ctrl
     _apply_filters(state)
     state.sel = 0
-    if state.search_query:
-        state.msg = f"· search={state.search_query!r}  {len(state.rows)} match(es)"
-    else:
-        state.msg = "· search cleared"
 
 
 def _handle_kill(stdscr, state: State) -> None:
@@ -654,6 +684,11 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
         c = stdscr.getch()
         if c == -1:
             time.sleep(0.1); continue
+        # Live-search mode swallows all keys until Enter / Esc.
+        if state.search_mode:
+            _live_search_step(state, c)
+            continue
+
         if c == ord('q'):
             return None
         if c in (curses.KEY_UP, ord('k')):
