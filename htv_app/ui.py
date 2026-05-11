@@ -117,6 +117,25 @@ def _subseq_match(needle: str, haystack: str) -> bool:
     return i == len(needle)
 
 
+def _match_positions(needle: str, haystack: str) -> set[int]:
+    """Indices in `haystack` that correspond to `needle`'s match.
+    Prefers contiguous substring; falls back to subsequence. Returns empty
+    set when the haystack doesn't actually contain the needle."""
+    if not needle:
+        return set()
+    n, h = needle.lower(), haystack.lower()
+    idx = h.find(n)
+    if idx >= 0:
+        return set(range(idx, idx + len(n)))
+    positions: set[int] = set()
+    i = 0
+    for j, c in enumerate(h):
+        if i < len(n) and c == n[i]:
+            positions.add(j)
+            i += 1
+    return positions if i == len(n) else set()
+
+
 def _apply_filters(state: State) -> None:
     out = state.rows_all
     if state.tab != TAB_ALL:
@@ -231,6 +250,26 @@ def _draw_row(stdscr, y: int, r: SessionRow, selected: bool,
         stdscr.addnstr(y, rest_x, rest.ljust(w - 1 - rest_x), w - 1 - rest_x, row_attr)
     except curses.error:
         pass
+
+    # Bold the characters that matched the active search so the user can see WHY.
+    if state.search_query:
+        # Column offsets: prefix + letter + " age>5 msgs>5  " then cwd<cwd_w then " " then title.
+        static_mid = f" {age:<5} {r.msgs:>5}  "
+        cwd_start = len(prefix) + len(letter_slot) + len(static_mid)
+        title_start = cwd_start + cwd_w + 1
+        _highlight(stdscr, y, cwd_start, cwd_s, state.search_query, row_attr)
+        _highlight(stdscr, y, title_start, r.display_title, state.search_query, row_attr)
+
+
+def _highlight(stdscr, y: int, x: int, text: str, query: str, base_attr: int) -> None:
+    """Overwrite matched characters of `text` at (y, x+pos) with A_BOLD on top of base_attr."""
+    for pos in _match_positions(query, text):
+        if pos >= len(text):
+            continue
+        try:
+            stdscr.addnstr(y, x + pos, text[pos], 1, base_attr | curses.A_BOLD)
+        except curses.error:
+            return
 
 
 def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) -> None:
