@@ -28,7 +28,7 @@ timeout = 45
 # Alternatives:
 #   command = ["wmctrl", "-a", "{title}"]
 #   command = []                                 # disable
-command = ["kitten", "@", "focus-window", "--match", "pid:{pid}"]
+command = ["kitten", "@", "focus-window", "--match", "id:{win_id}"]
 
 # ------------------------------------------------------------------
 # Harnesses — one block per session store.

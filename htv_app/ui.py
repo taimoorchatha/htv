@@ -634,13 +634,27 @@ def _handle_tmux(stdscr, state: State) -> Optional[tuple[str, Any]]:
 
 
 def _focus_bare_tty(state: State, row: SessionRow) -> None:
-    """Active session that isn't in tmux — try the configured focus command."""
+    """Active session that isn't in tmux — resolve window id if needed, then run
+    the configured focus command. Kitty's `--match pid:<N>` matches the window's
+    own shell pid, NOT child harness processes — so we walk the window tree
+    to find the owning window and substitute its id instead."""
     tty = tmux_util.tty_of(row.pid or 0)
     cmd = state.cfg.focus_command
     if not cmd:
         state.msg = f"· active in pid {row.pid} tty {tty or '?'} — no focus cmd configured"
         return None
-    placeholders = {"pid": str(row.pid or ""), "tty": tty, "title": row.display_title, "comm": row.harness}
+    uses_win_id = any("{win_id}" in a for a in cmd)
+    win_id = tmux_util.find_kitty_window(row.pid or 0) if uses_win_id else ""
+    if uses_win_id and not win_id:
+        state.msg = f"· focus: no kitty window owns pid {row.pid} (tty {tty or '?'})"
+        return None
+    placeholders = {
+        "pid": str(row.pid or ""),
+        "tty": tty,
+        "title": row.display_title,
+        "comm": row.harness,
+        "win_id": win_id,
+    }
     try:
         argv = [a.format(**placeholders) for a in cmd]
         import subprocess

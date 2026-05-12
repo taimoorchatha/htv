@@ -49,7 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "focus": {
         # kitty's remote-control; requires `allow_remote_control yes` in kitty.conf.
         # Leave as empty list to disable and show an info message instead.
-        "command": ["kitten", "@", "focus-window", "--match", "pid:{pid}"],
+        "command": ["kitten", "@", "focus-window", "--match", "id:{win_id}"],
     },
     "harnesses": {
         "kiro": {

@@ -69,6 +69,36 @@ def tty_of(pid: int) -> str:
     return _sh(["ps", "-o", "tty=", "-p", str(pid)]).strip()
 
 
+def find_kitty_window(pid: int) -> str:
+    """Return the kitty window id hosting `pid` (walks through kitty's foreground_processes).
+
+    Empty string if kitten can't be reached, kitty remote control is off,
+    or no window's process tree contains `pid`'s ancestor chain.
+    Why we walk ancestors: `kitten @ ls` only reports top-level foreground
+    processes (the shell), not our grandchild harness binary.
+    """
+    if not pid or not __import__("shutil").which("kitten"):
+        return ""
+    chain = set(ancestor_chain(pid))
+    if not chain:
+        return ""
+    out = _sh(["kitten", "@", "ls"])
+    if not out:
+        return ""
+    try:
+        import json
+        groups = json.loads(out)
+    except Exception:
+        return ""
+    for group in groups:
+        for tab in group.get("tabs", []):
+            for w in tab.get("windows", []):
+                for proc in w.get("foreground_processes", []):
+                    if proc.get("pid") in chain:
+                        return str(w.get("id") or "")
+    return ""
+
+
 def inside_tmux() -> bool:
     return bool(os.environ.get("TMUX"))
 
@@ -101,4 +131,4 @@ def _shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-__all__ = ["find_tmux_pane", "tty_of", "inside_tmux", "create_session", "ancestor_chain"]
+__all__ = ["find_tmux_pane", "find_kitty_window", "tty_of", "inside_tmux", "create_session", "ancestor_chain"]
