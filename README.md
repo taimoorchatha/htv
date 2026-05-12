@@ -1,6 +1,6 @@
 # htv
 
-Harness session dashboard. One curses TUI for **Kiro**, **Claude Code**, and **pi** sessions — with tabs, live fuzzy search, smart attach, and sidecar labels. Adapter-based so [Codex](https://github.com/openai/codex) and friends drop in when they land.
+One terminal dashboard for **Kiro**, **Claude Code**, and **pi** sessions — with tabs, live fuzzy search, smart attach, and sidecar labels. Adapter-based so [Codex](https://github.com/openai/codex) and friends drop in when they land.
 
 Runs on **Linux** today · **macOS** compatible in theory with known caveats (see [Platform support](#platform-support)).
 
@@ -207,7 +207,7 @@ Rule documented in [`agent-config`](../../taimoorchatha/agent-config) and replic
 
 - [x] Scaffold, config loader, adapter protocol, process index
 - [x] kiro + claude + pi adapters
-- [x] Curses TUI — tabs, smart Enter, tail view, pulsing activity
+- [x] Terminal dashboard — tabs, smart Enter, tail view, pulsing activity
 - [x] Sidecar names + tags + tag filter
 - [x] Tmux smart-attach + `focus.command` + kitty window resolver
 - [x] Live fuzzy search with bold-highlight, subsequence matching

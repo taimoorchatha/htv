@@ -633,7 +633,8 @@ def _handle_enter(stdscr, state: State, pairs: dict[str, int]) -> Optional[tuple
     argv = adapter.resume_argv(row)
     if not argv:
         state.msg = "· no resume_cmd configured"
-        return    return ("resume", {"cwd": row.cwd, "argv": argv, "sid": row.sid, "harness": row.harness})
+        return None
+    return ("resume", {"cwd": row.cwd, "argv": argv, "sid": row.sid, "harness": row.harness})
 
 
 def _handle_tags(stdscr, state: State) -> None:
