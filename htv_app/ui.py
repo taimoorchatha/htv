@@ -551,14 +551,81 @@ def _switch_tab(c: int, state: State, tab_order: list[str],
     return True
 
 
-def _handle_enter(state: State) -> Optional[tuple[str, Any]]:
-    """Enter key: return a resume action, or set state.msg and return None."""
+def _gather_active_info(row: SessionRow) -> dict:
+    """Pid / tty / tmux-pane / kitty-window info for the modal body."""
+    return {
+        "pid": row.pid,
+        "tty": tmux_util.tty_of(row.pid or 0) or "?",
+        "tmux_pane": tmux_util.find_tmux_pane(row.pid or 0) or "",
+        "kitty_win": tmux_util.find_kitty_window(row.pid or 0) or "",
+    }
+
+
+def _draw_active_modal(stdscr, row: SessionRow, info: dict) -> None:
+    """Render a centered modal explaining the active state + options."""
+    h, w = stdscr.getmaxyx()
+    body = [
+        f"Session:   {row.display_title[:56]}",
+        f"Harness:   {row.harness}",
+        "",
+        f"Running in pid {info['pid']}",
+        f"tty:       {info['tty']}",
+        f"in tmux:   {info['tmux_pane'] or 'no (bare tty)'}",
+    ]
+    if info["kitty_win"]:
+        body.append(f"kitty win: {info['kitty_win']}")
+    body += [
+        "",
+        "What do you want to do?",
+        "  [t]    tmux attach / focus the window",
+        f"  [K]    kill pid {info['pid']} (then Enter to resume)",
+        "  [v]    view conversation tail (read-only)",
+        "  [esc]  cancel",
+    ]
+    inner_w = max(56, max(len(line) for line in body) + 2)
+    box_w = min(w - 4, inner_w + 2)
+    box_h = len(body) + 4
+    y0 = max(0, (h - box_h) // 2)
+    x0 = max(0, (w - box_w) // 2)
+    stdscr.addnstr(y0, x0, "╭─ already running " + "─" * max(0, box_w - 20) + "╮", box_w, curses.A_REVERSE | curses.A_BOLD)
+    for i, line in enumerate(body + [""]):
+        stdscr.addnstr(y0 + 1 + i, x0, "│ " + line.ljust(box_w - 3) + "│", box_w, curses.A_REVERSE)
+    stdscr.addnstr(y0 + 1 + len(body) + 1, x0, "╰" + "─" * (box_w - 2) + "╯", box_w, curses.A_REVERSE)
+    stdscr.refresh()
+
+
+def _handle_active_modal(stdscr, state: State, pairs: dict[str, int], row: SessionRow) -> Optional[tuple[str, Any]]:
+    """Blocking modal on Enter for an active session. Returns a resume/attach action or None."""
+    info = _gather_active_info(row)
+    stdscr.nodelay(False)
+    try:
+        while True:
+            _draw_active_modal(stdscr, row, info)
+            c = stdscr.getch()
+            if c in (27, ord('q')):
+                state.msg = "· cancelled"
+                return None
+            if c == ord('t'):
+                return _handle_tmux(stdscr, state)
+            if c == ord('K'):
+                _handle_kill(stdscr, state)
+                return None
+            if c == ord('v'):
+                _tail_view(stdscr, state, pairs, row)
+                return None
+    finally:
+        stdscr.nodelay(True)
+
+
+def _handle_enter(stdscr, state: State, pairs: dict[str, int]) -> Optional[tuple[str, Any]]:
+    """Enter key.
+    * Idle session → return a resume action (caller chdir+execvp's the harness CLI)
+    * Active session → show the active-session modal, which itself may return an action"""
     if not state.rows:
         return None
     row = state.rows[state.sel]
     if row.active:
-        state.msg = f"· active in pid {row.pid} — press K to kill first, or v to view"
-        return None
+        return _handle_active_modal(stdscr, state, pairs, row)
     adapter = state.adapters.get(row.harness)
     if adapter is None:
         state.msg = "· no adapter"
@@ -566,8 +633,7 @@ def _handle_enter(state: State) -> Optional[tuple[str, Any]]:
     argv = adapter.resume_argv(row)
     if not argv:
         state.msg = "· no resume_cmd configured"
-        return None
-    return ("resume", {"cwd": row.cwd, "argv": argv, "sid": row.sid, "harness": row.harness})
+        return    return ("resume", {"cwd": row.cwd, "argv": argv, "sid": row.sid, "harness": row.harness})
 
 
 def _handle_tags(stdscr, state: State) -> None:
@@ -779,7 +845,7 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
             if action is not None:
                 return action
         elif c in (curses.KEY_ENTER, 10, 13):
-            action = _handle_enter(state)
+            action = _handle_enter(stdscr, state, pairs)
             if action is not None:
                 return action
         elif c == ord('K'):
