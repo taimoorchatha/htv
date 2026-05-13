@@ -42,7 +42,7 @@ htv answers "what's running where?" One list, every directory, every harness, li
 Python 3.11+ (for `tomllib`). Stdlib only, no runtime dependencies.
 
 ```sh
-pip install git+https://github.com/taimoorchatha/htv
+pip install --user git+https://github.com/taimoorchatha/htv
 htv
 ```
 
@@ -55,6 +55,25 @@ htv
 ```
 
 First run drops [`config.example.toml`](config.example.toml) at `~/.config/htv/config.toml`.
+
+### `htv: command not found` after `pip install`?
+
+Pip installs the `htv` script into your Python user-base `bin/` directory, which isn't always on `$PATH`. Find the right directory and add it:
+
+```sh
+# Show where pip put it:
+python3 -m site --user-base
+```
+
+Append `/bin` to that path and add it to your shell rc. The common defaults:
+
+| Environment | Add to `~/.zshrc` / `~/.bashrc` |
+|---|---|
+| **macOS, Python.org installer** | `export PATH="$HOME/Library/Python/3.13/bin:$PATH"` |
+| **macOS, Homebrew Python** | `export PATH="$(brew --prefix)/opt/python@3.13/libexec/bin:$PATH"` (or just `$(brew --prefix)/bin` if you used `brew install python`) |
+| **Linux** | `export PATH="$HOME/.local/bin:$PATH"` |
+
+Then `source ~/.zshrc` (or open a new terminal) and `htv` should resolve. Run `htv doctor` to confirm — it prints config + adapter status without entering the TUI.
 
 ## Platform support
 
