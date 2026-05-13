@@ -90,7 +90,16 @@ def cmd_tui(args: argparse.Namespace) -> int:
     write_default_if_missing()
     cfg = load()
     from .ui import run_tui
-    action = run_tui(cfg)
+    try:
+        action = run_tui(cfg)
+    except Exception as e:
+        import _curses
+        if isinstance(e, _curses.error):
+            print(f"htv: terminal init failed ({e}).", file=sys.stderr)
+            print("     Needs an interactive, color-capable TTY. Try kitty / alacritty / iTerm2 /", file=sys.stderr)
+            print("     gnome-terminal. `htv doctor` runs without curses if you need a sanity check.", file=sys.stderr)
+            return 1
+        raise
     if action is None:
         return 0
     kind, payload = action
@@ -127,7 +136,16 @@ def cmd_tui(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_python_version() -> None:
+    """Abort with a friendly error if Python < 3.11 (tomllib is stdlib since 3.11)."""
+    if sys.version_info < (3, 11):
+        v = ".".join(str(x) for x in sys.version_info[:3])
+        print(f"htv requires Python 3.11+ (detected {v}). It uses stdlib tomllib.", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def main(argv: list[str] | None = None) -> int:
+    _check_python_version()
     p = argparse.ArgumentParser(prog="htv", description="Harness session dashboard — kiro / claude / pi")
     p.add_argument("--version", action="version", version=f"htv {__version__}")
     sub = p.add_subparsers(dest="cmd")

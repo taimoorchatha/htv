@@ -26,20 +26,20 @@
 
 ## Why
 
-If you use AI coding agents across many directories, you've already lost track of your sessions. They're all somewhere, but you don't remember where — and `claude --resume` on one that's *already running* silently forks it.
+If you use AI coding agents across many directories, you've already lost track of your sessions. They're all somewhere, but you don't remember where, and `claude --resume` on one that's *already running* silently forks it.
 
-htv answers "what's running where?" One list, every directory, every harness, live activity — with a guard that refuses to re-resume an already-running session.
+htv answers "what's running where?" One list, every directory, every harness, live activity, with a guard that refuses to re-resume an already-running session.
 
 ## What you get
 
 - **Every session on your machine in one list.** Sorted by recency, filterable by harness, searchable as you type. The 3-day-old chat you forgot about in `~/code/infra` is right there.
 - **No accidental forks.** A live session shows a `●` and a modal on Enter with pid/tty/tmux/window info, so you take over the existing session instead of starting a duplicate.
 - **One keystroke to take it over.** `Enter` to resume in this terminal, `n` to open it in a new tab, `t` to jump to its existing tmux pane or terminal window. `v` to read the conversation without opening it.
-- **Multi-harness from day one.** Claude Code, pi, Kiro; Codex when it ships. Adapter-based — ~200 LOC to add a new one.
+- **Multi-harness from day one.** Claude Code, pi, Kiro; Codex when it ships. Adapter-based, ~200 LOC to add a new one.
 
 ## Install
 
-Python 3.11+ (for `tomllib`). Stdlib only — no runtime dependencies.
+Python 3.11+ (for `tomllib`). Stdlib only, no runtime dependencies.
 
 ```sh
 pip install git+https://github.com/taimoorchatha/htv
@@ -60,13 +60,13 @@ First run drops [`config.example.toml`](config.example.toml) at `~/.config/htv/c
 
 Works on **Linux** and **macOS**. macOS uses `ps` + batched `lsof` instead of `/proc` (~590ms per scan, on a background thread so the UI never blocks).
 
-For `t` (focus the terminal window of an active session), htv shells out to a command you configure in `[focus]`. Kitty has surgical window targeting via `kitten @ ls`; iTerm2 targets the exact session by `tty`; Ghostty / Terminal.app currently activate the app only. Hyprland, Sway, X11/wmctrl, and GNOME (with [Window Calls](https://github.com/ickyicky/window-calls)) work in theory — recipes for every terminal/WM live in [`config.example.toml`](config.example.toml).
+For `t` (focus the terminal window of an active session), htv shells out to a command you configure in `[focus]`. Kitty has surgical window targeting via `kitten @ ls`; iTerm2 targets the exact session by `tty`; Ghostty / Terminal.app currently activate the app only. Hyprland, Sway, X11/wmctrl, and GNOME (with [Window Calls](https://github.com/ickyicky/window-calls)) work in theory, recipes for every terminal/WM live in [`config.example.toml`](config.example.toml).
 
-## Enter, n, t — three ways to take over
+## Enter, n, t, three ways to take over
 
-- **`Enter`** — resume in the *current* terminal. htv `exec`s the harness CLI in place; you're inside the session in the same window. When you quit you land in your shell, not back in htv.
-- **`n`** — spawn the resume command in a *new* tab/pane (fire-and-forget; htv keeps running). Configurable per terminal in `[new_tab]`.
-- **`t`** — go to where it's already running. If the session is in a tmux pane, `tmux switch-client` to it. If it's a bare tty (no tmux), run your `focus.command` to focus that terminal window. If the session is idle, spawn a detached tmux session running the resume argv.
+- **`Enter`**, resume in the *current* terminal. htv `exec`s the harness CLI in place; you're inside the session in the same window. When you quit you land in your shell, not back in htv.
+- **`n`**, spawn the resume command in a *new* tab/pane (fire-and-forget; htv keeps running). Configurable per terminal in `[new_tab]`.
+- **`t`**, go to where it's already running. If the session is in a tmux pane, `tmux switch-client` to it. If it's a bare tty (no tmux), run your `focus.command` to focus that terminal window. If the session is idle, spawn a detached tmux session running the resume argv.
 
 All three refuse to re-resume an already-active session. On Active sessions, `Enter` shows a modal so you see what's actually holding it:
 
@@ -124,7 +124,7 @@ This prevents the silent-fork bug where `claude --resume <sid>` on an already-ru
 
 ## How it works
 
-- **Active detection.** Kiro writes a `.lock` file with the holding PID — we trust it. Claude and pi don't lock, so htv builds a per-refresh process index (Linux: `/proc/*/cwd`; macOS: `ps -axo pid=,comm=` + batched `lsof`) and matches by cwd. For each cwd with a live harness process, the newest jsonl in that cwd is marked active.
+- **Active detection.** Kiro writes a `.lock` file with the holding PID, we trust it. Claude and pi don't lock, so htv builds a per-refresh process index (Linux: `/proc/*/cwd`; macOS: `ps -axo pid=,comm=` + batched `lsof`) and matches by cwd. For each cwd with a live harness process, the newest jsonl in that cwd is marked active.
 - **Refresh is on a background thread**, so a 600ms-on-macOS scan never blocks the UI. Keypress-to-redraw latency is ~50ms.
 - **Per-jsonl row counts are cached** keyed on `(mtime_ns, size)` so we don't re-parse 16-MB conversation files every tick.
 - **Read-only on upstream stores.** User-defined names and tags live in a `<base>.htv-meta.json` sidecar next to the JSONL. Delete the jsonl, the sidecar goes with it.
@@ -133,10 +133,10 @@ This prevents the silent-fork bug where `claude --resume <sid>` on an already-ru
 
 See [`config.example.toml`](config.example.toml) for the full schema. The flags worth knowing:
 
-- `resume_cmd` (per harness) — templated with `{sid}`, `{cwd}`, `{jsonl}`.
-- `resume_via_shell = true` (per harness) — set this if your harness binary lives behind nvm / asdf / mise / pyenv / rbenv. htv will exec `$SHELL -i -c 'exec ...'` instead of calling `execvp` directly, so lazy-loaders and shell functions fire first. *Symptom this fixes: pressing `Enter` prints `not found: 'pi'` even though `which pi` works in that terminal.*
-- `[focus] command` — what to run when `t` needs to focus the terminal of an active bare-tty session. Placeholders: `{pid}` `{tty}` `{title}` `{comm}` `{win_id}`.
-- `[new_tab] command` — what to run when `n` spawns a new tab. Placeholders: `{cwd}` `{sid}` `{title}` `{harness}` `{resume}` (the resume argv shell-quoted, ready for `sh -c`).
+- `resume_cmd` (per harness), templated with `{sid}`, `{cwd}`, `{jsonl}`.
+- `resume_via_shell = true` (per harness), set this if your harness binary lives behind nvm / asdf / mise / pyenv / rbenv. htv will exec `$SHELL -i -c 'exec ...'` instead of calling `execvp` directly, so lazy-loaders and shell functions fire first. *Symptom this fixes: pressing `Enter` prints `not found: 'pi'` even though `which pi` works in that terminal.*
+- `[focus] command`, what to run when `t` needs to focus the terminal of an active bare-tty session. Placeholders: `{pid}` `{tty}` `{title}` `{comm}` `{win_id}`.
+- `[new_tab] command`, what to run when `n` spawns a new tab. Placeholders: `{cwd}` `{sid}` `{title}` `{harness}` `{resume}` (the resume argv shell-quoted, ready for `sh -c`).
 
 Recipes for kitty / iTerm2 / Ghostty / Terminal.app / tmux / Hyprland / Sway / X11 live in [`config.example.toml`](config.example.toml).
 

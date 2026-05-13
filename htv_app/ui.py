@@ -337,6 +337,26 @@ def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) ->
     stdscr.addnstr(h - 1, 0, foot, w - 1, curses.A_REVERSE)
 
 
+def _draw_empty_state(stdscr, h: int, w: int) -> None:
+    """Centered helper when there are no sessions anywhere (new user, no CLIs used yet)."""
+    lines = [
+        "No sessions found.",
+        "",
+        "Use one of these CLIs once to create a session:",
+        "  kiro-cli chat   (creates ~/.kiro/sessions/cli/)",
+        "  claude          (creates ~/.claude/projects/)",
+        "  pi              (creates ~/.pi/agent/sessions/)",
+        "",
+        "Then run htv again. For diagnostics: htv doctor.",
+    ]
+    y0 = max(3, (h - len(lines)) // 2)
+    for i, line in enumerate(lines):
+        try:
+            stdscr.addnstr(y0 + i, max(2, (w - len(line)) // 2), line, w - 2, curses.A_DIM)
+        except curses.error:
+            pass
+
+
 def _draw(stdscr, state: State, pairs: dict[str, int]) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
@@ -348,8 +368,11 @@ def _draw(stdscr, state: State, pairs: dict[str, int]) -> None:
     start = max(0, state.sel - body_h // 2)
     end = min(len(state.rows), start + body_h)
     glyph = _pulse_glyph(time.time())
-    for i, r in enumerate(state.rows[start:end]):
-        _draw_row(stdscr, 2 + i, r, (start + i) == state.sel, state, pairs, w, home, glyph)
+    if not state.rows_all:
+        _draw_empty_state(stdscr, h, w)
+    else:
+        for i, r in enumerate(state.rows[start:end]):
+            _draw_row(stdscr, 2 + i, r, (start + i) == state.sel, state, pairs, w, home, glyph)
     _draw_footer(stdscr, state, pairs, h, w)
     stdscr.refresh()
 
