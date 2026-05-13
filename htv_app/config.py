@@ -88,6 +88,11 @@ class HarnessConfig:
     label: str = "?"
     color: str = "white"
     resume_cmd: list[str] = field(default_factory=list)
+    # When true, resume_argv() wraps the command as `$SHELL -i -c 'exec ...'` so
+    # nvm/asdf/mise/pyenv/rbenv lazy-loaders and shell aliases get a chance to
+    # fire before the harness binary is looked up. Costs one extra fork on the
+    # Enter/t path; doesn't touch the refresh hot path.
+    resume_via_shell: bool = False
     # Adapter-specific keys land in `extra`; each adapter pulls what it needs.
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -100,6 +105,7 @@ class AppConfig:
     ai_command: list[str] = field(default_factory=list)
     ai_timeout: int = 45
     focus_command: list[str] = field(default_factory=list)
+    new_tab_command: list[str] = field(default_factory=list)
     harnesses: list[HarnessConfig] = field(default_factory=list)
     # Raw dict, for debugging
     raw: dict[str, Any] = field(default_factory=dict)
@@ -119,6 +125,7 @@ def _parse(raw: dict[str, Any]) -> AppConfig:
     app = raw.get("app", {})
     ai = raw.get("ai", {})
     focus = raw.get("focus", {})
+    new_tab = raw.get("new_tab", {})
     harnesses_raw = raw.get("harnesses", {})
 
     harnesses = []
@@ -126,7 +133,7 @@ def _parse(raw: dict[str, Any]) -> AppConfig:
         if not isinstance(cfg, dict):
             continue
         # Pull known keys; stash everything else in `extra` for the adapter.
-        known = {"kind", "enabled", "label", "color", "resume_cmd"}
+        known = {"kind", "enabled", "label", "color", "resume_cmd", "resume_via_shell"}
         extra = {k: v for k, v in cfg.items() if k not in known}
         harnesses.append(HarnessConfig(
             name=name,
@@ -135,6 +142,7 @@ def _parse(raw: dict[str, Any]) -> AppConfig:
             label=str(cfg.get("label", name[0].upper() if name else "?")),
             color=str(cfg.get("color", "white")),
             resume_cmd=list(cfg.get("resume_cmd") or []),
+            resume_via_shell=bool(cfg.get("resume_via_shell", False)),
             extra=extra,
         ))
 
@@ -145,6 +153,7 @@ def _parse(raw: dict[str, Any]) -> AppConfig:
         ai_command=list(ai.get("command") or []),
         ai_timeout=int(ai.get("timeout", 45)),
         focus_command=list(focus.get("command") or []),
+        new_tab_command=list(new_tab.get("command") or []),
         harnesses=harnesses,
         raw=raw,
     )

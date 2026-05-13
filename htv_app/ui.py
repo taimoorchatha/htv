@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import curses
 import os
+import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -44,6 +46,13 @@ class State:
     search_query: str = ""      # "" = no fuzzy search (committed)
     search_mode: bool = False   # True when user is typing in the search box
     last_refresh: float = 0.0
+    # Concurrency: the refresh worker rebuilds rows_all/procs on a background
+    # thread; the UI thread reads them under `lock`. `wake` lets handlers ask
+    # for an immediate refresh (e.g. after SIGTERM-ing a session). `stop` ends
+    # the worker on clean exit.
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    wake: threading.Event = field(default_factory=threading.Event)
+    stop: threading.Event = field(default_factory=threading.Event)
 
 
 # ---- Setup ---------------------------------------------------------------
@@ -89,13 +98,18 @@ def _instantiate_adapters(cfg: AppConfig) -> dict[str, Adapter]:
 # ---- Refresh & filter ----------------------------------------------------
 
 def _refresh(state: State) -> None:
-    state.procs = ProcIndex()
+    """Rebuild rows_all + procs. Safe to call from any thread — the brief
+    write of state under `state.lock` is the only point of contention with the
+    UI thread (which only reads, also under the lock).
+    """
+    procs = ProcIndex()
     rows: list[SessionRow] = []
+    err: Optional[str] = None
     for adapter in state.adapters.values():
         try:
-            rows.extend(adapter.list_sessions(state.procs))
+            rows.extend(adapter.list_sessions(procs))
         except Exception as e:
-            state.msg = f"· {adapter.name} error: {type(e).__name__}"
+            err = f"· {adapter.name} error: {type(e).__name__}"
     # Attach user-assigned sidecar name/tags (best-effort, missing sidecars → empty).
     for r in rows:
         meta = sidecar.load(r.jsonl)
@@ -103,9 +117,28 @@ def _refresh(state: State) -> None:
         r.tags = meta.get("tags", [])
     rows.sort(key=lambda r: r.updated, reverse=True)
     rows.sort(key=lambda r: 0 if r.active else 1)
-    state.rows_all = rows
-    _apply_filters(state)
-    state.last_refresh = time.time()
+    with state.lock:
+        state.procs = procs
+        state.rows_all = rows
+        if err:
+            state.msg = err
+        state.last_refresh = time.time()
+        _apply_filters(state)
+
+
+def _refresh_worker(state: State) -> None:
+    """Background loop: refresh on a fixed interval, or whenever a handler asks
+    for an early refresh via `state.wake.set()`. Stops when `state.stop` fires.
+    """
+    while not state.stop.is_set():
+        try:
+            _refresh(state)
+        except Exception as e:
+            with state.lock:
+                state.msg = f"· refresh error: {type(e).__name__}"
+        # Sleep up to refresh_interval, but wake immediately on demand.
+        state.wake.wait(timeout=state.cfg.refresh_interval)
+        state.wake.clear()
 
 
 def _subseq_match(needle: str, haystack: str) -> bool:
@@ -299,7 +332,7 @@ def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) ->
             bits.append("tags: " + " ".join("#" + t for t in state.rows[state.sel].tags))
         status = " · ".join(bits)
     stdscr.addnstr(h - 2, 0, status.ljust(w - 1), w - 1, curses.color_pair(pairs["_footer"]))
-    foot_text = " ↑↓ nav · ⏎ resume · t tmux · v view · / search · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
+    foot_text = " ↑↓ nav · ⏎ resume · n new-tab · t tmux · v view · / search · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
     foot = _marquee(foot_text, w - 1, time.time())
     stdscr.addnstr(h - 1, 0, foot, w - 1, curses.A_REVERSE)
 
@@ -546,8 +579,9 @@ def _switch_tab(c: int, state: State, tab_order: list[str],
         state.tab = tab_order[(cur - 1) % len(tab_order)]
     else:
         return False
-    _apply_filters(state)
-    state.sel = 0
+    with state.lock:
+        _apply_filters(state)
+        state.sel = 0
     return True
 
 
@@ -637,6 +671,58 @@ def _handle_enter(stdscr, state: State, pairs: dict[str, int]) -> Optional[tuple
     return ("resume", {"cwd": row.cwd, "argv": argv, "sid": row.sid, "harness": row.harness})
 
 
+def _handle_new_tab(state: State) -> None:
+    """`n` key: open the resume command in a new tab/pane of the user's terminal.
+
+    Unlike Enter (which exits htv and execvp's the harness in place) and `t`
+    (which uses tmux), this fires the configured `[new_tab] command` as a
+    fire-and-forget subprocess so htv keeps running. Same active-session guard
+    as Enter — we don't want a second resume to silently fork.
+    """
+    if not state.rows:
+        return
+    row = state.rows[state.sel]
+    if row.active:
+        state.msg = f"· active in pid {row.pid} — won't double-resume in a new tab"
+        return
+    cmd_template = state.cfg.new_tab_command
+    if not cmd_template:
+        state.msg = "· no new_tab.command configured — see config.example.toml"
+        return
+    adapter = state.adapters.get(row.harness)
+    if adapter is None:
+        state.msg = "· no adapter"
+        return
+    argv = adapter.resume_argv(row)
+    if not argv:
+        state.msg = "· no resume_cmd configured"
+        return
+    # `{resume}` is the resume argv joined as a shell-safe string so the user
+    # can drop it into `sh -c {resume}` inside their new-tab command.
+    from .adapters.base import _shell_quote
+    placeholders = {
+        "cwd": row.cwd,
+        "sid": row.sid,
+        "title": row.display_title,
+        "harness": row.harness,
+        "resume": " ".join(_shell_quote(a) for a in argv),
+    }
+    try:
+        spawn = [s.format(**placeholders) for s in cmd_template]
+    except KeyError as e:
+        state.msg = f"· new_tab.command: unknown placeholder {e}"
+        return
+    try:
+        # Fire-and-forget; htv keeps running. start_new_session detaches from
+        # our process group so the spawned terminal command isn't killed if
+        # htv exits.
+        subprocess.Popen(spawn, start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        state.msg = f"· spawned new tab for {row.harness}:{row.sid[:8]}"
+    except (FileNotFoundError, OSError) as e:
+        state.msg = f"· new-tab failed: {e}"
+
+
 def _handle_tags(stdscr, state: State) -> None:
     if not state.rows:
         return
@@ -661,8 +747,9 @@ def _handle_tag_filter(stdscr, state: State) -> None:
         state.msg = "· cancelled"
         return
     state.tag_filter = raw.strip()
-    _apply_filters(state)
-    state.sel = 0
+    with state.lock:
+        _apply_filters(state)
+        state.sel = 0
     state.msg = f"· tag={state.tag_filter!r}" if state.tag_filter else "· filter cleared"
 
 
@@ -681,7 +768,11 @@ def _handle_tmux(stdscr, state: State) -> Optional[tuple[str, Any]]:
         # Active but bare tty — try the configured focus command.
         return _focus_bare_tty(state, row)
 
-    # Idle → create a new tmux session running the resume cmd.
+    # Idle → we'd create a new tmux session. Bail early if tmux isn't installed.
+    if not tmux_util.have_tmux():
+        state.msg = "· tmux not installed (try: brew install tmux  /  apt install tmux)"
+        return None
+
     adapter = state.adapters.get(row.harness)
     if adapter is None:
         state.msg = "· no adapter"; return None
@@ -743,7 +834,9 @@ def _handle_search(stdscr, state: State) -> None:
 
 def _live_search_step(state: State, c: int) -> None:
     """Handle one keystroke while in search_mode. Updates state.search_query
-    live and re-applies filters on every edit."""
+    live and re-applies filters on every edit. The lock guards against the
+    background refresh worker swapping rows mid-filter.
+    """
     if c in (10, 13, curses.KEY_ENTER):            # commit
         state.search_mode = False
         state.msg = (f"· search={state.search_query!r}  {len(state.rows)} match(es)"
@@ -752,7 +845,8 @@ def _live_search_step(state: State, c: int) -> None:
     if c == 27:                                    # Esc — cancel + clear
         state.search_mode = False
         state.search_query = ""
-        _apply_filters(state)
+        with state.lock:
+            _apply_filters(state)
         state.msg = "· search cleared"
         return
     if c in (curses.KEY_BACKSPACE, 127, 8):
@@ -761,8 +855,9 @@ def _live_search_step(state: State, c: int) -> None:
         state.search_query += chr(c)
     else:
         return                                     # ignore arrows / fn / ctrl
-    _apply_filters(state)
-    state.sel = 0
+    with state.lock:
+        _apply_filters(state)
+        state.sel = 0
 
 
 def _handle_kill(stdscr, state: State) -> None:
@@ -777,8 +872,9 @@ def _handle_kill(stdscr, state: State) -> None:
     try:
         os.kill(row.pid, 15)
         state.msg = f"· sent SIGTERM to {row.pid}"
+        # Give the OS a moment to reap, then ask the worker for an early refresh.
         time.sleep(0.3)
-        _refresh(state)
+        state.wake.set()
     except Exception as e:
         state.msg = f"· kill failed: {e}"
 
@@ -790,25 +886,48 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
 
     state = State(cfg=cfg)
     state.adapters = _instantiate_adapters(cfg)
+    # Initial synchronous refresh so the first frame has rows.
     _refresh(state)
+    # Background refresher — daemon thread so Ctrl-C / clean exit still kills it.
+    worker = threading.Thread(target=_refresh_worker, args=(state,), name="htv-refresh", daemon=True)
+    worker.start()
 
     tab_order = [TAB_ALL] + [h.name for h in cfg.harnesses if h.enabled]
     tab_keys = {ord(str(i + 1)): t for i, t in enumerate(tab_order)}
 
+    try:
+        return _event_loop(stdscr, state, pairs, tab_order, tab_keys)
+    finally:
+        state.stop.set()
+        state.wake.set()  # unblock the worker so it can notice stop
+
+
+def _event_loop(stdscr, state, pairs, tab_order, tab_keys) -> Optional[tuple[str, Any]]:
+    """UI loop. Refreshes happen on a background thread; we never block on them.
+
+    Threading model: the worker (a) does heavy work (ProcIndex + adapter scans),
+    then (b) briefly takes state.lock to swap rows_all + rows + procs. The UI
+    only takes the lock around _apply_filters() and _refresh-on-demand calls
+    — i.e. when WE mutate the same fields. Read paths (_draw, indexing) are
+    lock-free: Python name binding is atomic so reads either see the old or
+    the new list reference, never a torn one. The only residual hazard is
+    `state.rows[state.sel]` after a swap to a shorter list, which we clamp
+    inline whenever we touch it.
+    """
     while True:
-        if time.time() - state.last_refresh > cfg.refresh_interval:
-            _refresh(state)
         _draw(stdscr, state, pairs)
         state.msg = ""
 
         c = stdscr.getch()
         if c == -1:
             time.sleep(0.1); continue
+        # Clamp sel in case the worker swapped in a shorter list since last frame.
+        if state.rows:
+            state.sel = min(state.sel, len(state.rows) - 1)
         # Live-search mode swallows all keys until Enter / Esc.
         if state.search_mode:
             _live_search_step(state, c)
             continue
-
         if c == ord('q'):
             return None
         if c in (curses.KEY_UP, ord('k')):
@@ -819,7 +938,8 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
             pass
         elif c == ord('a'):
             state.show_active = not state.show_active
-            _apply_filters(state)
+            with state.lock:
+                _apply_filters(state)
             state.msg = f"· show_active = {state.show_active}"
         elif c == ord('r'):
             _handle_rename(stdscr, state)
@@ -832,11 +952,13 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
         elif c == 27:  # Esc — clear search → tag → (none)
             if state.search_query:
                 state.search_query = ""
-                _apply_filters(state)
+                with state.lock:
+                    _apply_filters(state)
                 state.msg = "· search cleared"
             elif state.tag_filter:
                 state.tag_filter = ""
-                _apply_filters(state)
+                with state.lock:
+                    _apply_filters(state)
                 state.msg = "· filter cleared"
         elif c == ord('v') and state.rows:
             _tail_view(stdscr, state, pairs, state.rows[state.sel])
@@ -849,6 +971,8 @@ def _tui(stdscr, cfg: AppConfig) -> Optional[tuple[str, Any]]:
             action = _handle_enter(stdscr, state, pairs)
             if action is not None:
                 return action
+        elif c == ord('n'):
+            _handle_new_tab(state)
         elif c == ord('K'):
             _handle_kill(stdscr, state)
 

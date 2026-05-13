@@ -117,6 +117,38 @@ A **bare tty** is a terminal process NOT running inside tmux — directly in kit
 | htv can "jump" to it via `tmux switch-client` | ✗ | ✓ |
 | htv can "focus the window" via `focus.command` | ✓ (WM-/terminal-specific) | n/a |
 
+htv detects which one your session is in by walking the process's parent chain (Linux: `/proc/<pid>/status`; macOS: `ps -o ppid=`) and cross-referencing against `tmux list-panes`. If any ancestor is a tmux pane's `pane_pid`, you're in tmux.
+
+### `new_tab.command` — open a session in a new tab
+
+The `n` key opens an idle session's resume command in a new tab/pane of your current terminal. Fire-and-forget: htv keeps running. Refused on active (●) sessions to avoid the double-resume fork that Enter also guards against.
+
+Configure in `~/.config/htv/config.toml`:
+
+```toml
+[new_tab]
+# kitty:
+command = ["kitten", "@", "launch", "--type=tab", "--cwd={cwd}", "sh", "-c", "{resume}"]
+
+# iTerm2 (macOS):
+# command = ["osascript", "-e", """
+#   tell application "iTerm"
+#     tell current window
+#       create tab with default profile
+#       tell current session of current tab to write text "cd {cwd} && {resume}"
+#     end tell
+#     activate
+#   end tell
+# """]
+
+# tmux (when htv is running inside tmux): new window in the same session
+# command = ["tmux", "new-window", "-c", "{cwd}", "sh", "-c", "{resume}"]
+```
+
+Full list of variants (Ghostty, kitty split-pane, etc.) in [`config.example.toml`](config.example.toml). Placeholders: `{cwd}`, `{sid}`, `{title}`, `{harness}`, `{resume}` (resume argv joined and shell-quoted).
+
+For `focus.command` recipes per terminal, see the [Platform support](#platform-support) tables above and [`config.example.toml`](config.example.toml).
+
 ## Keybindings
 
 ### List view
@@ -126,6 +158,7 @@ A **bare tty** is a terminal process NOT running inside tmux — directly in kit
 | `↑` `↓` / `j` `k` | Navigate |
 | `1` `2` `3` `4` / `Tab` / `Shift-Tab` | Switch tabs (All / Kiro / Claude / Pi) |
 | `Enter` | Idle: resume in current terminal. Active: open the modal above. |
+| `n` | Open the resume command in a **new tab/pane** of your terminal (see [`new_tab.command`](#new_tabcommand--open-a-session-in-a-new-tab)) |
 | `t` | Tmux attach / focus window / create new tmux session |
 | `v` | Live tail of the selected session's JSONL |
 | `/` | Live fuzzy search (name + title + cwd). Type to filter in real time. |
@@ -182,8 +215,21 @@ See [`config.example.toml`](config.example.toml) for the full schema. Per-harnes
 
 - `session_dir` / `projects_dir` / `sessions_dir` — where the store lives
 - `resume_cmd` — templated with `{sid}`, `{cwd}`, `{jsonl}`
+- `resume_via_shell = true` — wrap resume in `$SHELL -i -c 'exec ...'` so nvm/asdf/mise/aliases work (see below)
 - `enabled = false` — hide a harness entirely
 - `label`, `color` — appearance in the tab bar and list
+
+### When to set `resume_via_shell`
+
+htv resumes via `execvp(argv[0], argv)`, which does a kernel-level PATH lookup and **cannot see**:
+
+- shell functions (e.g. nvm's `lazy_load_nvm` stub for `pi`/`claude`)
+- aliases
+- PATH entries that only get added after a version manager runs
+
+If your harness binary lives under nvm / asdf / mise / pyenv / rbenv (very common for npm-installed CLIs like `pi`, `claude`, `codex`), set `resume_via_shell = true`. htv will then exec `$SHELL -i -c 'exec <cmd>'` so your shell rc fires first. One extra fork on the Enter/t path; zero impact on refresh.
+
+Symptom you're trying to fix: pressing `Enter` prints `not found: 'pi'` (or `'claude'`) even though `which pi` works fine in that terminal.
 
 Add a brand-new harness: write a `~200-line` adapter in `htv_app/adapters/`, register it, drop a `[harnesses.<name>]` block in your config.
 

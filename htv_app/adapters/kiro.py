@@ -20,6 +20,7 @@ from .base import Adapter, register
 from ..proc import ProcIndex
 from ..session import SessionRow
 from ._util import count_lines as _count_lines
+from ._cache import cached_count
 
 
 class KiroAdapter(Adapter):
@@ -62,7 +63,7 @@ class KiroAdapter(Adapter):
                     active, pid = False, None  # stale lock
 
             jsonl = os.path.join(self.session_dir, f"{sid}.jsonl")
-            msgs = _count_lines(jsonl)
+            msgs = cached_count(jsonl, _count_lines)
 
             rows.append(SessionRow(
                 harness=self.name,

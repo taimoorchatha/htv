@@ -21,14 +21,90 @@ timeout = 45
 
 [focus]
 # When a session is active but NOT in a tmux pane, this command is run to
-# focus the terminal window holding it. Placeholders: {pid} {tty} {title} {comm}.
+# focus the terminal window holding it.
+# Placeholders: {pid} {tty} {title} {comm} {win_id}
+# {tty} is the bare device name (e.g. "ttys009"); prefix with /dev/ if needed.
+# {win_id} is kitty-specific — htv looks up the kitty OS-window holding {pid}
+# and substitutes its id. Use `id:{win_id}` (not `pid:{pid}`) so kitty matches
+# the *window*, not the child process inside it.
 # Empty list = disabled (just show an info line).
 #
-# Default assumes kitty with allow_remote_control enabled.
-# Alternatives:
-#   command = ["wmctrl", "-a", "{title}"]
-#   command = []                                 # disable
+# Pick ONE of the following:
+#
+# kitty (needs `allow_remote_control yes` in kitty.conf):
 command = ["kitten", "@", "focus-window", "--match", "id:{win_id}"]
+#
+# iTerm2 (macOS) — finds the session whose tty matches and selects it:
+# command = ["osascript", "-e", """
+#   tell application "iTerm"
+#     repeat with w in windows
+#       repeat with t in tabs of w
+#         repeat with s in sessions of t
+#           if tty of s is "/dev/{tty}" then
+#             select s
+#             tell w to select
+#             activate
+#             return
+#           end if
+#         end repeat
+#       end repeat
+#     end repeat
+#   end tell
+# """]
+#
+# Ghostty (macOS) — no per-window focus CLI yet (ghostty-org/ghostty#8961),
+# this just brings the app forward; you'll still have to find the right tab:
+# command = ["osascript", "-e", "tell application \"Ghostty\" to activate"]
+#
+# Linux X11:
+# command = ["wmctrl", "-a", "{title}"]
+#
+# Linux Wayland (Hyprland):
+# command = ["hyprctl", "dispatch", "focuswindow", "pid:{pid}"]
+#
+# Disable entirely (just show an info line):
+# command = []
+
+[new_tab]
+# Pressing `n` on an idle session opens its resume command in a new tab/pane
+# of your terminal (fire-and-forget; htv keeps running). Refused on active
+# sessions to avoid double-resume forks.
+#
+# Placeholders:
+#   {cwd}     — session's working directory
+#   {sid}     — session id
+#   {title}   — display title
+#   {harness} — 'claude' | 'pi' | 'kiro' | ...
+#   {resume}  — resume argv joined and shell-quoted, ready for `sh -c`
+#
+# Empty list = feature disabled (status line tells you so). Pick one:
+#
+# kitty (needs `allow_remote_control yes` in kitty.conf):
+# command = ["kitten", "@", "launch", "--type=tab", "--cwd={cwd}", "sh", "-c", "{resume}"]
+#
+# kitty split-pane (same OS-window) instead of tab:
+# command = ["kitten", "@", "launch", "--type=window", "--cwd={cwd}", "sh", "-c", "{resume}"]
+#
+# iTerm2 (macOS) — new tab in the current window, then runs the resume cmd:
+# command = ["osascript", "-e", """
+#   tell application "iTerm"
+#     tell current window
+#       create tab with default profile
+#       tell current session of current tab to write text "cd {cwd} && {resume}"
+#     end tell
+#     activate
+#   end tell
+# """]
+#
+# Ghostty (macOS) — no new-tab CLI yet (ghostty-org/ghostty#12136); opens a
+# new OS-window instead. Replace once that ships:
+# command = ["open", "-na", "Ghostty.app", "--args", "--working-directory={cwd}", "-e", "{resume}"]
+#
+# tmux (when htv itself is running inside tmux) — new window in same session:
+# command = ["tmux", "new-window", "-c", "{cwd}", "sh", "-c", "{resume}"]
+#
+# Disable:
+command = []
 
 # ------------------------------------------------------------------
 # Harnesses — one block per session store.
@@ -60,6 +136,13 @@ sessions_dir = "~/.pi/agent/sessions"
 resume_cmd   = ["pi", "--session", "{sid}"]
 label        = "pi"
 color        = "cyan"
+# Set to true if `pi` lives behind a lazy-loaded version manager (nvm,
+# asdf, mise, pyenv, rbenv) or is defined as a shell function/alias.
+# When true, htv invokes `$SHELL -i -c 'exec pi --session ...'` instead of
+# calling execvp directly, so the lazy-loader fires first. One extra fork
+# per resume; no impact on the refresh hot path. Same flag works on any
+# harness block. Default: false.
+# resume_via_shell = true
 
 # Future — uncomment once codex-cli lands:
 # [harnesses.codex]

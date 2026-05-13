@@ -16,12 +16,11 @@ from __future__ import annotations
 import glob
 import json
 import os
-import time
-
 from .base import Adapter, register
 from ..proc import ProcIndex
 from ..session import SessionRow
 from ._util import iso_from_mtime as _iso_from_mtime
+from ._cache import cached_count
 
 # Max length for a title snippet pulled from the jsonl.
 _TITLE_LEN = 80
@@ -59,7 +58,9 @@ class ClaudeAdapter(Adapter):
         if not os.path.isdir(self.projects_dir):
             return rows
 
-        now = time.time()
+        # Pass 1: build all rows; remember (cwd, mtime) so we can pick the
+        # "current" jsonl per cwd in pass 2.
+        by_cwd: dict[str, list[tuple[float, SessionRow]]] = {}
         for proj in sorted(os.listdir(self.projects_dir)):
             proj_path = os.path.join(self.projects_dir, proj)
             if not os.path.isdir(proj_path):
@@ -73,27 +74,35 @@ class ClaudeAdapter(Adapter):
                 except OSError:
                     mtime = 0
 
-                active = False
-                pid = None
-                if cwd and (now - mtime) < self.active_window:
-                    for pe in procs.processes_in_cwd(cwd, comms=("claude",)):
-                        active = True
-                        pid = pe.pid
-                        break
-
                 title = _extract_text(first_user) if first_user else ""
-                rows.append(SessionRow(
+                row = SessionRow(
                     harness=self.name,
                     sid=sid,
                     jsonl=jsonl,
                     cwd=cwd or "?",
                     title=title[:_TITLE_LEN],
                     updated=_iso_from_mtime(mtime),
-                    msgs=_count_conversation(jsonl),
-                    active=active,
-                    pid=pid,
+                    msgs=cached_count(jsonl, _count_conversation),
+                    active=False,
+                    pid=None,
                     extra={"project_dir": proj_path},
-                ))
+                )
+                rows.append(row)
+                if cwd:
+                    by_cwd.setdefault(cwd, []).append((mtime, row))
+
+        # Pass 2: for each cwd with a live `claude` process, mark the most-recently
+        # modified jsonl in that cwd as active. This handles two facts at once:
+        #   1) a live process at a prompt has stale mtime (was: incorrectly idle)
+        #   2) one cwd can have many old jsonls; only the newest is the current one
+        for cwd, entries in by_cwd.items():
+            live = procs.processes_in_cwd(cwd, comms=("claude",))
+            if not live:
+                continue
+            _, newest = max(entries, key=lambda x: x[0])
+            newest.active = True
+            newest.pid = live[0].pid
+
         return rows
 
     def tail_entries(self, row: SessionRow, n: int = 10000) -> list[tuple[str, str]]:

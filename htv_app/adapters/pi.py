@@ -24,12 +24,11 @@ import glob
 import json
 import os
 import re
-import time
-
 from .base import Adapter, register
 from ..proc import ProcIndex
 from ..session import SessionRow
 from ._util import count_lines as _count_lines, iso_from_mtime as _iso_from_mtime
+from ._cache import cached_count
 
 _TITLE_LEN = 80
 _UUID_RE = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.I)
@@ -48,7 +47,10 @@ class PiAdapter(Adapter):
         if not os.path.isdir(self.sessions_dir):
             return rows
 
-        now = time.time()
+        # Two-pass: see claude.py for the rationale. Briefly: a live pi process
+        # with a stale jsonl (idle at a prompt) is still active, and one cwd
+        # may have many old jsonls — only the newest is the current one.
+        by_cwd: dict[str, list[tuple[float, SessionRow]]] = {}
         for proj in sorted(os.listdir(self.sessions_dir)):
             proj_path = os.path.join(self.sessions_dir, proj)
             if not os.path.isdir(proj_path):
@@ -69,26 +71,30 @@ class PiAdapter(Adapter):
                 except OSError:
                     mtime = 0
 
-                active = False
-                pid = None
-                if cwd and (now - mtime) < self.active_window:
-                    for pe in procs.processes_in_cwd(cwd, comms=("pi",)):
-                        active = True
-                        pid = pe.pid
-                        break
-
-                rows.append(SessionRow(
+                row = SessionRow(
                     harness=self.name,
                     sid=sid,
                     jsonl=jsonl,
                     cwd=cwd or "?",
                     title=(first_user_text or "")[:_TITLE_LEN],
                     updated=_iso_from_mtime(mtime),
-                    msgs=_count_lines(jsonl),
-                    active=active,
-                    pid=pid,
+                    msgs=cached_count(jsonl, _count_lines),
+                    active=False,
+                    pid=None,
                     extra={"project_dir": proj_path},
-                ))
+                )
+                rows.append(row)
+                if cwd:
+                    by_cwd.setdefault(cwd, []).append((mtime, row))
+
+        for cwd, entries in by_cwd.items():
+            live = procs.processes_in_cwd(cwd, comms=("pi",))
+            if not live:
+                continue
+            _, newest = max(entries, key=lambda x: x[0])
+            newest.active = True
+            newest.pid = live[0].pid
+
         return rows
 
     def tail_entries(self, row: SessionRow, n: int = 10000) -> list[tuple[str, str]]:

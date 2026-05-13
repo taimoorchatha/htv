@@ -9,7 +9,9 @@ All heavy lifting stays off the UI thread's critical path.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import sys
 from typing import Optional
 
 
@@ -20,15 +22,30 @@ def _sh(cmd: list[str], timeout: int = 3) -> str:
         return ""
 
 
+def have_tmux() -> bool:
+    """True iff the `tmux` binary is on PATH. Used to gracefully degrade the `t` keybinding."""
+    return shutil.which("tmux") is not None
+
+
 def _ppid(pid: int) -> Optional[int]:
-    try:
-        with open(f"/proc/{pid}/status") as f:
-            for ln in f:
-                if ln.startswith("PPid:"):
-                    return int(ln.split()[1])
-    except OSError:
+    """Parent pid of `pid`. Linux: /proc/<pid>/status. macOS/BSD: `ps -o ppid=`."""
+    if sys.platform.startswith("linux"):
+        try:
+            with open(f"/proc/{pid}/status") as f:
+                for ln in f:
+                    if ln.startswith("PPid:"):
+                        return int(ln.split()[1])
+        except OSError:
+            return None
         return None
-    return None
+    # macOS / BSD fallback.
+    out = _sh(["ps", "-o", "ppid=", "-p", str(pid)]).strip()
+    if not out:
+        return None
+    try:
+        return int(out)
+    except ValueError:
+        return None
 
 
 def ancestor_chain(pid: int, max_depth: int = 12) -> list[int]:
@@ -46,7 +63,7 @@ def ancestor_chain(pid: int, max_depth: int = 12) -> list[int]:
 
 def find_tmux_pane(pid: int) -> Optional[str]:
     """Return 'session:win.pane' if `pid`'s ancestor chain hits a tmux pane, else None."""
-    if not pid:
+    if not pid or not have_tmux():
         return None
     chain = set(ancestor_chain(pid))
     if not chain:
@@ -106,6 +123,8 @@ def inside_tmux() -> bool:
 def create_session(name: str, cwd: str, argv: list[str]) -> tuple[bool, str]:
     """Create a detached tmux session `name` running `argv` in `cwd`.
     Returns (ok, message-or-error)."""
+    if not have_tmux():
+        return False, "tmux not installed (try: brew install tmux  /  apt install tmux)"
     if subprocess.run(["tmux", "has-session", "-t", name], capture_output=True).returncode == 0:
         return False, f"tmux session '{name}' already exists"
     # Use sh -c to inject a cd step; exec so the resumed process replaces the shell.
@@ -131,4 +150,4 @@ def _shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-__all__ = ["find_tmux_pane", "find_kitty_window", "tty_of", "inside_tmux", "create_session", "ancestor_chain"]
+__all__ = ["find_tmux_pane", "find_kitty_window", "tty_of", "inside_tmux", "create_session", "ancestor_chain", "have_tmux"]

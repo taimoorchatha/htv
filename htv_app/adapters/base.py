@@ -5,6 +5,7 @@ to htv. Adapters are instantiated with a HarnessConfig at startup.
 """
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 
 from ..config import HarnessConfig
@@ -40,13 +41,24 @@ class Adapter(ABC):
     # ---- Optional hooks ----
 
     def resume_argv(self, row: SessionRow) -> list[str]:
-        """Interpolate {sid}, {cwd}, {jsonl} into resume_cmd from config."""
+        """Interpolate {sid}, {cwd}, {jsonl} into resume_cmd from config.
+
+        If `resume_via_shell` is set on the harness, wrap the result as
+        `$SHELL -i -c 'exec <quoted argv>'` so version managers (nvm, asdf,
+        mise, pyenv, rbenv) and shell aliases get a chance to fire before
+        the harness binary is resolved.
+        """
         placeholders = {
             "sid": row.sid,
             "cwd": row.cwd,
             "jsonl": row.jsonl,
         }
-        return [s.format(**placeholders) for s in self.cfg.resume_cmd]
+        argv = [s.format(**placeholders) for s in self.cfg.resume_cmd]
+        if not argv or not getattr(self.cfg, "resume_via_shell", False):
+            return argv
+        shell = os.environ.get("SHELL", "/bin/sh")
+        inner = "exec " + " ".join(_shell_quote(a) for a in argv)
+        return [shell, "-i", "-c", inner]
 
     def __repr__(self) -> str:
         return f"<Adapter {self.name} kind={self.kind}>"
@@ -71,6 +83,16 @@ def get_adapter_cls(kind: str) -> type[Adapter] | None:
 
 def all_kinds() -> list[str]:
     return sorted(_REGISTRY.keys())
+
+
+def _shell_quote(s: str) -> str:
+    """Minimal POSIX shell quoting — single-quote-safe. Duplicated from tmux_util
+    so the adapter layer doesn't depend on tmux helpers."""
+    if not s:
+        return "''"
+    if all(c.isalnum() or c in "_-./=@+:{}" for c in s):
+        return s
+    return "'" + s.replace("'", "'\\''") + "'"
 
 
 __all__ = ["Adapter", "AdapterError", "register", "get_adapter_cls", "all_kinds"]
