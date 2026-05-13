@@ -26,17 +26,18 @@
 
 ## Why
 
-If you run more than one AI coding agent at a time — a Claude Code session in this repo, a pi session in another, maybe a Kiro window or two — you've already lost the same conversation twice today. Each harness has its own session store, its own resume command, and no idea the others exist. `claude --resume` on a session that's already running silently forks it. There's no way to ask the machine "what's running where?"
+If you use AI coding agents across many directories, you've already lost track of your sessions. The auth-server session from this morning, the data-pipeline one from yesterday, three Claude Code conversations on the same monorepo you started before lunch — they're all somewhere, but you don't remember where, and `claude --resume` on one that's *already running* silently forks it.
 
-htv answers that. One list, every harness, live activity, one keystroke to resume — with a guard that refuses to re-resume an already-live session.
+It gets worse if you mix harnesses. Claude Code, pi, Kiro — each has its own session store, its own resume command, no idea the others exist. There's no way to ask the machine "what's running where?"
+
+htv answers that. One list, every directory, every harness, live activity — with a guard that refuses to re-resume an already-running session.
 
 ## What you get
 
-- **One dashboard for every harness.** Claude Code, pi, Kiro today; Codex when it ships. Adapter-based — ~200 LOC to add a new one.
+- **Every session on your machine in one list.** Sorted by recency, filterable by harness, searchable as you type. The 3-day-old chat you forgot about in `~/code/infra` is right there.
 - **No accidental forks.** A live session shows a `●` and a modal on Enter with pid/tty/tmux/window info, so you take over the existing session instead of starting a duplicate.
-- **Live fuzzy search, smart resume, sidecar names + tags.** Type `/` to narrow; `Enter` to resume in this terminal; `n` to spawn a new tab; `t` to jump to the existing tmux pane.
-
-Full feature list and keybindings are [further down](#keybindings).
+- **One keystroke to take it over.** `Enter` to resume in this terminal, `n` to open it in a new tab, `t` to jump to its existing tmux pane or terminal window. `v` to read the conversation without opening it.
+- **Multi-harness from day one.** Claude Code, pi, Kiro; Codex when it ships. Adapter-based — ~200 LOC to add a new one.
 
 ## Install
 
