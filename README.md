@@ -1,46 +1,57 @@
 # htv
 
-One terminal dashboard for **Kiro**, **Claude Code**, and **pi** sessions — with tabs, live fuzzy search, smart attach, and sidecar labels. Adapter-based so [Codex](https://github.com/openai/codex) and friends drop in when they land.
+> **htop for your AI coding sessions.** One terminal dashboard for every Claude Code, pi, and Kiro session running on your machine.
 
-Runs on **Linux** today · **macOS** compatible in theory with known caveats (see [Platform support](#platform-support)).
+<!-- TODO: replace this static screenshot with the recorded demo GIF (issue #10). -->
 
 ```
- All (122)  Kiro (81)  Claude (4)  Pi (37)
- ST H   AGE  MSG   CWD                          TITLE
-  ● pi  2s   251   ~/vault/s2p/ai-champion      shipping htv v0.1
-  · K   1d   2284  ~/vault/s2p/fiml             debugging cagg timeouts
-  ● K   12m  8     ~                            quick brazil question
-  · CC  2h   281   ~                            improving claude code experience
+┌─ htv 0.1 ────────────────────────────────────────────────────────────────────┐
+│  All (185)  Claude (161)  pi (24)  Kiro (0)                                  │
+│  ST H   AGE  MSG   CWD                          TITLE                        │
+│  ● pi   2s   251  ~/workspace/htv              shipping the new-tab key      │
+│  ● CC  19h   176  ~/workspace/tada             pull latest tada and build it │
+│  ● pi  19h   169  ~/workspace/pi-extensions    do you see these two extens…  │
+│  · pi   1d   100  ~/workspace/faqir            generate a claude.md for the… │
+│  · pi   2d    27  ~/workspace/agent-config     how to load these in pi       │
+│  · CC   2d   140  ~/money                      check the transactions under  │
+│  · CC   4d   659  ~/workspace/mut-price-bot    [Request interrupted by user] │
+│  · pi   4d   155  ~/mut/sales                  validate the mut sniper rules │
+│                                                                              │
+│  185 shown · 3 active                                                        │
+│  ↑↓ nav  ⏎ resume  n new-tab  t tmux  v view  / search  r rename  q quit     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  ● = live process holding this session    · = idle
 ```
 
-## Features
+## Why
 
-- **One dashboard** for every coding-agent session on the machine.
-- **Pulsing activity glyph** (● ↔ ○) so live sessions visibly beat on-screen.
-- **Two take-over modes** (Enter vs `t`) — see [Enter vs t](#enter-vs-t).
-- **Never auto-forks** — active sessions show a modal with pid/tty/tmux/window info instead of blindly resuming.
-- **Live tail view** of any session's JSONL, labeled USER / AI / TOOL, auto-follow.
-- **Live fuzzy search** (`/`) — as you type, list narrows; matched characters bold. Subsequence matching (`kcgt` → **K**ell's **c**a**g**g **t**imeout).
-- **Sidecar names + tags** per session — edit with `r` / `#`, filter with `F`.
-- **TOML config** at `~/.config/htv/config.toml`.
-- **Read-only on upstream stores** — htv never writes to kiro / claude / pi session files. Only its own `<base>.htv-meta.json` sidecars.
+If you run more than one AI coding agent at a time — a Claude Code session in this repo, a pi session in another, maybe a Kiro window or two — you've already lost the same conversation twice today. Each harness has its own session store, its own resume command, and no idea the others exist. `claude --resume` on a session that's already running silently forks it. There's no way to ask the machine "what's running where?"
+
+htv answers that. One list, every harness, live activity, one keystroke to resume — with a guard that refuses to re-resume an already-live session.
+
+## What you get
+
+- **One dashboard for every harness.** Claude Code, pi, Kiro today; Codex when it ships. Adapter-based — ~200 LOC to add a new one.
+- **No accidental forks.** A live session shows a `●` and a modal on Enter with pid/tty/tmux/window info, so you take over the existing session instead of starting a duplicate.
+- **Live fuzzy search, smart resume, sidecar names + tags.** Type `/` to narrow; `Enter` to resume in this terminal; `n` to spawn a new tab; `t` to jump to the existing tmux pane.
+
+Full feature list and keybindings are [further down](#keybindings).
 
 ## Install
 
 Python 3.11+ (for `tomllib`). Stdlib only — no runtime dependencies.
 
-### From source
-
 ```sh
-git clone https://github.com/taimoorchatha/htv ~/workplace/htv
-ln -s ~/workplace/htv/bin/htv ~/bin/htv
+pip install git+https://github.com/taimoorchatha/htv
 htv
 ```
 
-### With pip
+Or from source:
 
 ```sh
-pip install git+https://github.com/taimoorchatha/htv
+git clone https://github.com/taimoorchatha/htv ~/workspace/htv
+ln -s ~/workspace/htv/bin/htv ~/bin/htv
 htv
 ```
 
@@ -48,37 +59,17 @@ First run drops [`config.example.toml`](config.example.toml) at `~/.config/htv/c
 
 ## Platform support
 
-### OS
+Works on **Linux** and **macOS**. macOS uses `ps` + batched `lsof` instead of `/proc` (~590ms per scan, on a background thread so the UI never blocks).
 
-| OS | Status | Tested in practice | Notes |
-|---|---|---|---|
-| **Linux** | ✓ full | ✓ Ubuntu + kitty | Primary target |
-| **macOS** | partial | ✗ not yet | Kiro works (uses lock files). Claude/pi active detection requires a `ps`-based fallback to `/proc` ([#13](https://github.com/taimoorchatha/htv/issues/13)). The app still runs — it just marks Claude/pi sessions as idle when they aren't. |
+For `t` (focus the terminal window of an active session), htv shells out to a command you configure in `[focus]`. Kitty has surgical window targeting via `kitten @ ls`; iTerm2 targets the exact session by `tty`; Ghostty / Terminal.app currently activate the app only. Hyprland, Sway, X11/wmctrl, and GNOME (with [Window Calls](https://github.com/ickyicky/window-calls)) work in theory — recipes for every terminal/WM live in [`config.example.toml`](config.example.toml).
 
-### Terminals — for `t` / `focus.command`
+## Enter, n, t — three ways to take over
 
-The mechanism is config-driven (any command works), but the precision depends on what each terminal exposes:
+- **`Enter`** — resume in the *current* terminal. htv `exec`s the harness CLI in place; you're inside the session in the same window. When you quit you land in your shell, not back in htv.
+- **`n`** — spawn the resume command in a *new* tab/pane (fire-and-forget; htv keeps running). Configurable per terminal in `[new_tab]`.
+- **`t`** — go to where it's already running. If the session is in a tmux pane, `tmux switch-client` to it. If it's a bare tty (no tmux), run your `focus.command` to focus that terminal window. If the session is idle, spawn a detached tmux session running the resume argv.
 
-| Terminal | Precision | Supported in theory | Tested in practice |
-|---|---|---|---|
-| **kitty** (any OS) | window-surgical | ✓ `kitten @ focus-window --match id:{win_id}` | ✓ Linux |
-| **Hyprland** (Wayland) | pid-surgical | ✓ `hyprctl dispatch focuswindow pid:{pid}` | ✗ |
-| **Sway** (Wayland) | pid-surgical | ✓ `swaymsg '[pid={pid}]' focus` | ✗ |
-| **X11** + any terminal | pid-surgical | ✓ `sh -c 'xdotool windowactivate $(xdotool search --pid {pid}` head -1`)'` | ✗ |
-| **iTerm2** (macOS) | app-level | partial — `osascript -e 'tell application "iTerm2" to activate'`. Tab targeting: [#12](https://github.com/taimoorchatha/htv/issues/12) | ✗ |
-| **Terminal.app** (macOS) | app-level | partial — `osascript -e 'tell application "Terminal" to activate'`. Tab targeting: [#12](https://github.com/taimoorchatha/htv/issues/12) | ✗ |
-| **GNOME/Wayland** | app-level | partial — needs a gnome-shell extension like [Window Calls](https://github.com/ickyicky/window-calls) for precise focus | ✗ |
-| **raw Linux VT** (tty1-6) | ✗ | not focusable from userspace (`chvt` needs root) | ✗ |
-
-Drop your terminal's recipe into `~/.config/htv/config.toml` under `[focus]`. Placeholders available: `{pid}`, `{tty}`, `{title}`, `{comm}`, `{win_id}` (kitty only).
-
-## Enter vs t
-
-### Enter = "resume in my current terminal"
-
-**Idle session**: htv exits, `cd`s to the session's cwd, and execs the harness CLI (`kiro-cli --resume-id`, `claude --resume`, `pi --session`) in place. You're inside the session in the same terminal. When you quit, you land in your shell — not back in htv.
-
-**Active session** (●): Enter shows a modal instead of blindly resuming, to prevent silent forks (Claude in particular will fork if you re-resume an active session):
+All three refuse to re-resume an already-active session. On Active sessions, `Enter` shows a modal so you see what's actually holding it:
 
 ```
 ╭─ already running ─────────────────────────────╮
@@ -98,56 +89,7 @@ Drop your terminal's recipe into `~/.config/htv/config.toml` under `[focus]`. Pl
 ╰───────────────────────────────────────────────╯
 ```
 
-### t = "take me to where it's running, or spin up a tmux session"
-
-| Session state | What `t` does |
-|---|---|
-| **Active + in a tmux pane** | `tmux switch-client` (inside tmux) or `tmux attach-session` (outside) straight to that pane. |
-| **Active + bare tty** | Runs the configured `focus.command` to focus the terminal window. For kitty: resolves the owning kitty window via `kitten @ ls` (walking the foreground-processes tree) and focuses it. Falls back to an info line if the command or tooling isn't available. |
-| **Idle** | Prompts for a tmux session name, creates a detached tmux session running the resume argv in the session's cwd, then attaches. The session **keeps running after you detach** — unlike Enter's in-terminal resume. |
-
-### What does "bare tty" mean?
-
-A **bare tty** is a terminal process NOT running inside tmux — directly in kitty / iTerm / gnome-terminal, in an ssh shell, a physical TTY, etc. It attaches to `/dev/pts/N` without tmux's multiplexing layer on top.
-
-|  | Bare tty | tmux pane |
-|---|---|---|
-| Survives terminal close | ✗ | ✓ |
-| Can be detached/reattached | ✗ | ✓ |
-| htv can "jump" to it via `tmux switch-client` | ✗ | ✓ |
-| htv can "focus the window" via `focus.command` | ✓ (WM-/terminal-specific) | n/a |
-
-htv detects which one your session is in by walking the process's parent chain (Linux: `/proc/<pid>/status`; macOS: `ps -o ppid=`) and cross-referencing against `tmux list-panes`. If any ancestor is a tmux pane's `pane_pid`, you're in tmux.
-
-### `new_tab.command` — open a session in a new tab
-
-The `n` key opens an idle session's resume command in a new tab/pane of your current terminal. Fire-and-forget: htv keeps running. Refused on active (●) sessions to avoid the double-resume fork that Enter also guards against.
-
-Configure in `~/.config/htv/config.toml`:
-
-```toml
-[new_tab]
-# kitty:
-command = ["kitten", "@", "launch", "--type=tab", "--cwd={cwd}", "sh", "-c", "{resume}"]
-
-# iTerm2 (macOS):
-# command = ["osascript", "-e", """
-#   tell application "iTerm"
-#     tell current window
-#       create tab with default profile
-#       tell current session of current tab to write text "cd {cwd} && {resume}"
-#     end tell
-#     activate
-#   end tell
-# """]
-
-# tmux (when htv is running inside tmux): new window in the same session
-# command = ["tmux", "new-window", "-c", "{cwd}", "sh", "-c", "{resume}"]
-```
-
-Full list of variants (Ghostty, kitty split-pane, etc.) in [`config.example.toml`](config.example.toml). Placeholders: `{cwd}`, `{sid}`, `{title}`, `{harness}`, `{resume}` (resume argv joined and shell-quoted).
-
-For `focus.command` recipes per terminal, see the [Platform support](#platform-support) tables above and [`config.example.toml`](config.example.toml).
+This prevents the silent-fork bug where `claude --resume <sid>` on an already-running session creates an orphan conversation.
 
 ## Keybindings
 
@@ -158,7 +100,7 @@ For `focus.command` recipes per terminal, see the [Platform support](#platform-s
 | `↑` `↓` / `j` `k` | Navigate |
 | `1` `2` `3` `4` / `Tab` / `Shift-Tab` | Switch tabs (All / Kiro / Claude / Pi) |
 | `Enter` | Idle: resume in current terminal. Active: open the modal above. |
-| `n` | Open the resume command in a **new tab/pane** of your terminal (see [`new_tab.command`](#new_tabcommand--open-a-session-in-a-new-tab)) |
+| `n` | Open the resume command in a new tab/pane of your terminal (configurable per terminal, see [Configuration](#configuration)) |
 | `t` | Tmux attach / focus window / create new tmux session |
 | `v` | Live tail of the selected session's JSONL |
 | `/` | Live fuzzy search (name + title + cwd). Type to filter in real time. |
@@ -181,92 +123,37 @@ For `focus.command` recipes per terminal, see the [Platform support](#platform-s
 | `n` / `N` | Next / previous match |
 | `q` / `Esc` | Back to list |
 
-## How it detects "active" sessions
+## How it works
 
-- **Kiro** writes a `.lock` file with the holding PID — we trust it (fast, accurate, cross-platform).
-- **Claude** and **pi** don't lock. On Linux, htv walks `/proc/*/cwd` per refresh and calls a session "active" if:
-  1. The JSONL mtime is within `active_mtime_window_sec` (90s default), AND
-  2. A live `claude` or `pi` process has the same cwd.
-
-On **macOS** the `/proc` scan short-circuits (silently returns empty). Claude/pi will render as idle even when live. Fix tracked in [#13](https://github.com/taimoorchatha/htv/issues/13).
-
-## Sidecar metadata
-
-htv never writes to upstream session files. Per-session user data lives beside the JSONL:
-
-```
-~/.pi/agent/sessions/.../<ts>_<uuid>.jsonl           ← pi owns this
-~/.pi/agent/sessions/.../<ts>_<uuid>.htv-meta.json   ← we own this
-```
-
-```json
-{
-  "name": "fix cagg timeout",
-  "tags": ["oncall", "s2p"],
-  "updated_at": "2026-05-09T07:30:00Z"
-}
-```
-
-Display precedence: user `name` → AI title ([#2](https://github.com/taimoorchatha/htv/issues/2), deferred) → raw title → `(no title)`. Deleting the jsonl deletes the sidecar with it.
+- **Active detection.** Kiro writes a `.lock` file with the holding PID — we trust it. Claude and pi don't lock, so htv builds a per-refresh process index (Linux: `/proc/*/cwd`; macOS: `ps -axo pid=,comm=` + batched `lsof`) and matches by cwd. For each cwd with a live harness process, the newest jsonl in that cwd is marked active.
+- **Refresh is on a background thread**, so a 600ms-on-macOS scan never blocks the UI. Keypress-to-redraw latency is ~50ms.
+- **Per-jsonl row counts are cached** keyed on `(mtime_ns, size)` so we don't re-parse 16-MB conversation files every tick.
+- **Read-only on upstream stores.** User-defined names and tags live in a `<base>.htv-meta.json` sidecar next to the JSONL. Delete the jsonl, the sidecar goes with it.
 
 ## Configuration
 
-See [`config.example.toml`](config.example.toml) for the full schema. Per-harness overrides:
+See [`config.example.toml`](config.example.toml) for the full schema. The flags worth knowing:
 
-- `session_dir` / `projects_dir` / `sessions_dir` — where the store lives
-- `resume_cmd` — templated with `{sid}`, `{cwd}`, `{jsonl}`
-- `resume_via_shell = true` — wrap resume in `$SHELL -i -c 'exec ...'` so nvm/asdf/mise/aliases work (see below)
-- `enabled = false` — hide a harness entirely
-- `label`, `color` — appearance in the tab bar and list
+- `resume_cmd` (per harness) — templated with `{sid}`, `{cwd}`, `{jsonl}`.
+- `resume_via_shell = true` (per harness) — set this if your harness binary lives behind nvm / asdf / mise / pyenv / rbenv. htv will exec `$SHELL -i -c 'exec ...'` instead of calling `execvp` directly, so lazy-loaders and shell functions fire first. *Symptom this fixes: pressing `Enter` prints `not found: 'pi'` even though `which pi` works in that terminal.*
+- `[focus] command` — what to run when `t` needs to focus the terminal of an active bare-tty session. Placeholders: `{pid}` `{tty}` `{title}` `{comm}` `{win_id}`.
+- `[new_tab] command` — what to run when `n` spawns a new tab. Placeholders: `{cwd}` `{sid}` `{title}` `{harness}` `{resume}` (the resume argv shell-quoted, ready for `sh -c`).
 
-### When to set `resume_via_shell`
+Recipes for kitty / iTerm2 / Ghostty / Terminal.app / tmux / Hyprland / Sway / X11 live in [`config.example.toml`](config.example.toml).
 
-htv resumes via `execvp(argv[0], argv)`, which does a kernel-level PATH lookup and **cannot see**:
+## Adding a harness
 
-- shell functions (e.g. nvm's `lazy_load_nvm` stub for `pi`/`claude`)
-- aliases
-- PATH entries that only get added after a version manager runs
-
-If your harness binary lives under nvm / asdf / mise / pyenv / rbenv (very common for npm-installed CLIs like `pi`, `claude`, `codex`), set `resume_via_shell = true`. htv will then exec `$SHELL -i -c 'exec <cmd>'` so your shell rc fires first. One extra fork on the Enter/t path; zero impact on refresh.
-
-Symptom you're trying to fix: pressing `Enter` prints `not found: 'pi'` (or `'claude'`) even though `which pi` works fine in that terminal.
-
-Add a brand-new harness: write a `~200-line` adapter in `htv_app/adapters/`, register it, drop a `[harnesses.<name>]` block in your config.
-
-## Code-quality gate
-
-`bin/review` runs as pre-commit + pre-push hooks:
-
-- All `.py` files compile
-- pyflakes clean (with a small allow-list for deliberate side-effect imports)
-- No function ≥ 100 LOC (warns at 60)
-- No duplicate function bodies across files
-- **150 LOC cap per commit** — separately for `.py`/`.ts`/etc. production code and test code (markdown / config / shell ignored)
-
-Rule documented in [`agent-config`](../../taimoorchatha/agent-config) and replicated in `~/.claude/CLAUDE.md` / `~/.kiro/steering.md`. Install hooks in a fresh clone:
-
-```sh
-./bin/install-hooks
-```
+~200 LOC in `htv_app/adapters/`. Implement `list_sessions(procs) -> [SessionRow]` and `tail_entries(row) -> [(kind, text)]`, register it, drop a `[harnesses.<name>]` block in your config. See `htv_app/adapters/pi.py` for a worked example.
 
 ## Roadmap
 
-- [x] Scaffold, config loader, adapter protocol, process index
-- [x] kiro + claude + pi adapters
-- [x] Terminal dashboard — tabs, smart Enter, tail view, pulsing activity
-- [x] Sidecar names + tags + tag filter
-- [x] Tmux smart-attach + `focus.command` + kitty window resolver
-- [x] Live fuzzy search with bold-highlight, subsequence matching
-- [x] Active-session modal on Enter
-
-**Open** (see [issues](https://github.com/taimoorchatha/htv/issues)):
+Open on the [tracker](https://github.com/taimoorchatha/htv/issues):
 
 | Priority | Issue |
 |---|---|
-| P1 | [#3](https://github.com/taimoorchatha/htv/issues/3) Summarize-this-session on demand (ask-htv, needs auth flow) |
-| P1 | [#11](https://github.com/taimoorchatha/htv/issues/11) Resume fails under nvm/asdf/mise lazy-loaders |
-| P2 | [#8](https://github.com/taimoorchatha/htv/issues/8) codex adapter · [#4](https://github.com/taimoorchatha/htv/issues/4) sort by column · [#5](https://github.com/taimoorchatha/htv/issues/5) tail-view live-search · [#13](https://github.com/taimoorchatha/htv/issues/13) macOS active detection |
-| P3 | [#2](https://github.com/taimoorchatha/htv/issues/2) AI titles (deferred) · [#7](https://github.com/taimoorchatha/htv/issues/7) search conversation content · [#6](https://github.com/taimoorchatha/htv/issues/6) tail title searchable · [#9](https://github.com/taimoorchatha/htv/issues/9) fs watcher · [#12](https://github.com/taimoorchatha/htv/issues/12) macOS focus helpers |
+| P1 | [#3](https://github.com/taimoorchatha/htv/issues/3) Summarize-this-session on demand (ask-htv) |
+| P2 | [#8](https://github.com/taimoorchatha/htv/issues/8) codex adapter · [#4](https://github.com/taimoorchatha/htv/issues/4) sort by column · [#5](https://github.com/taimoorchatha/htv/issues/5) tail-view live-search |
+| P3 | [#2](https://github.com/taimoorchatha/htv/issues/2) AI titles · [#7](https://github.com/taimoorchatha/htv/issues/7) search conversation content · [#9](https://github.com/taimoorchatha/htv/issues/9) fs watcher · [#6](https://github.com/taimoorchatha/htv/issues/6) tail title searchable |
 | P4 | [#10](https://github.com/taimoorchatha/htv/issues/10) demo GIF |
 
 ## License
