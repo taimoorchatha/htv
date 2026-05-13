@@ -18,7 +18,7 @@
 │  · pi   4d   155  ~/notes                     (no title)                     │
 │                                                                              │
 │  185 shown · 3 active                                                        │
-│  ↑↓ nav  ⏎ resume  n new-tab  t tmux  v view  / search  r rename  q quit     │
+│  ↑↓ nav  ⏎ resume  t tmux  v view  / search  r rename  q quit                │
 └──────────────────────────────────────────────────────────────────────────────┘
 
   ● = live process holding this session    · = idle
@@ -34,7 +34,7 @@ htv answers "what's running where?" One list, every directory, every harness, li
 
 - **Every session on your machine in one list.** Sorted by recency, filterable by harness, searchable as you type. The 3-day-old chat you forgot about in `~/code/infra` is right there.
 - **No accidental forks.** A live session shows a `●` and a modal on Enter with pid/tty/tmux/window info, so you take over the existing session instead of starting a duplicate.
-- **One keystroke to take it over.** `Enter` to resume in this terminal, `n` to open it in a new tab, `t` to jump to its existing tmux pane or terminal window. `v` to read the conversation without opening it.
+- **One keystroke to take it over.** `Enter` to resume in this terminal, `t` to jump to its existing tmux pane or terminal window, `v` to read the conversation without opening it.
 - **Multi-harness from day one.** Claude Code, pi, Kiro; Codex when it ships. Adapter-based, ~200 LOC to add a new one.
 
 ## Install
@@ -83,13 +83,12 @@ Works on **Linux** and **macOS**. macOS uses `ps` + batched `lsof` instead of `/
 
 For `t` (focus the terminal window of an active session), htv shells out to a command you configure in `[focus]`. Kitty has surgical window targeting via `kitten @ ls`; iTerm2 targets the exact session by `tty`; Ghostty / Terminal.app currently activate the app only. Hyprland, Sway, X11/wmctrl, and GNOME (with [Window Calls](https://github.com/ickyicky/window-calls)) work in theory, recipes for every terminal/WM live in [`config.example.toml`](config.example.toml).
 
-## Enter, n, t, three ways to take over
+## Enter and t, two ways to take over
 
 - **`Enter`**, resume in the *current* terminal. htv `exec`s the harness CLI in place; you're inside the session in the same window. When you quit you land in your shell, not back in htv.
-- **`n`**, spawn the resume command in a *new* tab/pane (fire-and-forget; htv keeps running). Configurable per terminal in `[new_tab]`.
 - **`t`**, go to where it's already running. If the session is in a tmux pane, `tmux switch-client` to it. If it's a bare tty (no tmux), run your `focus.command` to focus that terminal window. If the session is idle, spawn a detached tmux session running the resume argv.
 
-All three refuse to re-resume an already-active session. On Active sessions, `Enter` shows a modal so you see what's actually holding it:
+Both refuse to re-resume an already-active session. On Active sessions, `Enter` shows a modal so you see what's actually holding it:
 
 ```
 ╭─ already running ─────────────────────────────╮
@@ -120,7 +119,6 @@ This prevents the silent-fork bug where `claude --resume <sid>` on an already-ru
 | `↑` `↓` / `j` `k` | Navigate |
 | `1` `2` `3` `4` / `Tab` / `Shift-Tab` | Switch tabs (All / Kiro / Claude / Pi) |
 | `Enter` | Idle: resume in current terminal. Active: open the modal above. |
-| `n` | Open the resume command in a new tab/pane of your terminal (configurable per terminal, see [Configuration](#configuration)) |
 | `t` | Tmux attach / focus window / create new tmux session |
 | `v` | Live tail of the selected session's JSONL |
 | `/` | Live fuzzy search (name + title + cwd). Type to filter in real time. |
@@ -157,7 +155,7 @@ See [`config.example.toml`](config.example.toml) for the full schema. The flags 
 - `resume_cmd` (per harness), templated with `{sid}`, `{cwd}`, `{jsonl}`.
 - `resume_via_shell = true` (per harness), set this if your harness binary lives behind nvm / asdf / mise / pyenv / rbenv. htv will exec `$SHELL -i -c 'exec ...'` instead of calling `execvp` directly, so lazy-loaders and shell functions fire first. *Symptom this fixes: pressing `Enter` prints `not found: 'pi'` even though `which pi` works in that terminal.*
 - `[focus] command`, what to run when `t` needs to focus the terminal of an active bare-tty session. Placeholders: `{pid}` `{tty}` `{title}` `{comm}` `{win_id}`.
-- `[new_tab] command`, what to run when `n` spawns a new tab. Placeholders: `{cwd}` `{sid}` `{title}` `{harness}` `{resume}` (the resume argv shell-quoted, ready for `sh -c`).
+- `[new_tab] command`, wired but the `n` keybinding is currently disabled while we sort out a reliable cross-terminal spawn flow ([#15](https://github.com/taimoorchatha/htv/issues/15)). Placeholders: `{cwd}` `{sid}` `{title}` `{harness}` `{resume}`.
 
 Recipes for kitty / iTerm2 / Ghostty / Terminal.app / tmux / Hyprland / Sway / X11 live in [`config.example.toml`](config.example.toml).
 
@@ -172,7 +170,7 @@ Open on the [tracker](https://github.com/taimoorchatha/htv/issues):
 | Priority | Issue |
 |---|---|
 | P1 | [#3](https://github.com/taimoorchatha/htv/issues/3) Summarize-this-session on demand (ask-htv) |
-| P2 | [#8](https://github.com/taimoorchatha/htv/issues/8) codex adapter · [#4](https://github.com/taimoorchatha/htv/issues/4) sort by column · [#5](https://github.com/taimoorchatha/htv/issues/5) tail-view live-search |
+| P2 | [#15](https://github.com/taimoorchatha/htv/issues/15) restore `n` new-tab · [#8](https://github.com/taimoorchatha/htv/issues/8) codex adapter · [#4](https://github.com/taimoorchatha/htv/issues/4) sort by column · [#5](https://github.com/taimoorchatha/htv/issues/5) tail-view live-search |
 | P3 | [#2](https://github.com/taimoorchatha/htv/issues/2) AI titles · [#7](https://github.com/taimoorchatha/htv/issues/7) search conversation content · [#9](https://github.com/taimoorchatha/htv/issues/9) fs watcher · [#6](https://github.com/taimoorchatha/htv/issues/6) tail title searchable |
 | P4 | [#10](https://github.com/taimoorchatha/htv/issues/10) demo GIF |
 

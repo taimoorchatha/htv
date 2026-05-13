@@ -332,7 +332,7 @@ def _draw_footer(stdscr, state: State, pairs: dict[str, int], h: int, w: int) ->
             bits.append("tags: " + " ".join("#" + t for t in state.rows[state.sel].tags))
         status = " · ".join(bits)
     stdscr.addnstr(h - 2, 0, status.ljust(w - 1), w - 1, curses.color_pair(pairs["_footer"]))
-    foot_text = " ↑↓ nav · ⏎ resume · n new-tab · t tmux · v view · / search · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
+    foot_text = " ↑↓ nav · ⏎ resume · t tmux · v view · / search · r rename · # tags · F filter · a active · 1-4 · K kill · q quit "
     foot = _marquee(foot_text, w - 1, time.time())
     stdscr.addnstr(h - 1, 0, foot, w - 1, curses.A_REVERSE)
 
@@ -994,8 +994,11 @@ def _event_loop(stdscr, state, pairs, tab_order, tab_keys) -> Optional[tuple[str
             action = _handle_enter(stdscr, state, pairs)
             if action is not None:
                 return action
-        elif c == ord('n'):
-            _handle_new_tab(state)
+        # `n` new-tab disabled until we have a reliable cross-terminal flow.
+        # The handler (_handle_new_tab) and config (`[new_tab] command`) are
+        # still wired; just not bound. Re-enable by uncommenting these lines.
+        # elif c == ord('n'):
+        #     _handle_new_tab(state)
         elif c == ord('K'):
             _handle_kill(stdscr, state)
 
