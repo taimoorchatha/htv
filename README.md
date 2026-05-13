@@ -73,6 +73,8 @@ Append `/bin` to that path and add it to your shell rc. The common defaults:
 | **macOS, Homebrew Python** | `export PATH="$(brew --prefix)/opt/python@3.13/libexec/bin:$PATH"` (or just `$(brew --prefix)/bin` if you used `brew install python`) |
 | **Linux** | `export PATH="$HOME/.local/bin:$PATH"` |
 
+*(Fittingly, you can also just paste this whole section into your AI of choice and have it figure out which row is yours.)*
+
 Then `source ~/.zshrc` (or open a new terminal) and `htv` should resolve. Run `htv doctor` to confirm — it prints config + adapter status without entering the TUI.
 
 ## Platform support
