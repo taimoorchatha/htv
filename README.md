@@ -8,14 +8,14 @@
 ┌─ htv 0.1 ────────────────────────────────────────────────────────────────────┐
 │  All (185)  Claude (161)  pi (24)  Kiro (0)                                  │
 │  ST H   AGE  MSG   CWD                          TITLE                        │
-│  ● pi   2s   251  ~/workspace/htv              shipping the new-tab key      │
-│  ● CC  19h   176  ~/workspace/tada             pull latest tada and build it │
-│  ● pi  19h   169  ~/workspace/pi-extensions    do you see these two extens…  │
-│  · pi   1d   100  ~/workspace/faqir            generate a claude.md for the… │
-│  · pi   2d    27  ~/workspace/agent-config     how to load these in pi       │
-│  · CC   2d   140  ~/money                      check the transactions under  │
-│  · CC   4d   659  ~/workspace/mut-price-bot    [Request interrupted by user] │
-│  · pi   4d   155  ~/mut/sales                  validate the mut sniper rules │
+│  ● pi   2s   251  ~/code/api-server           fix the rate-limiter regress…  │
+│  ● CC  19h   176  ~/code/web                  ship the onboarding redesign   │
+│  ● pi  19h   169  ~/code/infra/terraform      debug the staging vpc peering  │
+│  · pi   1d   100  ~/code/data-pipeline        backfill last quarter's events │
+│  · pi   2d    27  ~/code/cli-tools            add --json flag to the report  │
+│  · CC   2d   140  ~/code/mobile               investigate the ios crash log  │
+│  · CC   4d   659  ~/code/web                  [Request interrupted by user]  │
+│  · pi   4d   155  ~/notes                     (no title)                     │
 │                                                                              │
 │  185 shown · 3 active                                                        │
 │  ↑↓ nav  ⏎ resume  n new-tab  t tmux  v view  / search  r rename  q quit     │
