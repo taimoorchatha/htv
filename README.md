@@ -26,11 +26,9 @@
 
 ## Why
 
-If you use AI coding agents across many directories, you've already lost track of your sessions. The auth-server session from this morning, the data-pipeline one from yesterday, three Claude Code conversations on the same monorepo you started before lunch — they're all somewhere, but you don't remember where, and `claude --resume` on one that's *already running* silently forks it.
+If you use AI coding agents across many directories, you've already lost track of your sessions. They're all somewhere, but you don't remember where — and `claude --resume` on one that's *already running* silently forks it.
 
-It gets worse if you mix harnesses. Claude Code, pi, Kiro — each has its own session store, its own resume command, no idea the others exist. There's no way to ask the machine "what's running where?"
-
-htv answers that. One list, every directory, every harness, live activity — with a guard that refuses to re-resume an already-running session.
+htv answers "what's running where?" One list, every directory, every harness, live activity — with a guard that refuses to re-resume an already-running session.
 
 ## What you get
 
