@@ -1,4 +1,4 @@
-# htv
+# htv - (harnesstv)
 
 > **htop for your AI coding sessions.** One terminal dashboard for every Claude Code, pi, and Kiro session running on your machine.
 
