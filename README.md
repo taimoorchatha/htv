@@ -33,6 +33,7 @@ htv answers "what's running where?" One list, every directory, every harness, li
 ## What you get
 
 - **Every session on your machine in one list.** Sorted by recency, filterable by harness, searchable as you type. The 3-day-old chat you forgot about in `~/code/infra` is right there.
+- **Name and tag what matters.** Press `r` to rename a session, `#` to tag it (`oncall`, `auth`, `wip`, whatever). `F` filters to a tag instantly. Tags live in a sidecar file — htv never touches the harness's own session files.
 - **No accidental forks.** A live session shows a `●` and a modal on Enter with pid/tty/tmux/window info, so you take over the existing session instead of starting a duplicate.
 - **One keystroke to take it over.** `Enter` to resume in this terminal, `t` to jump to its existing tmux pane or terminal window, `v` to read the conversation without opening it.
 - **Multi-harness from day one.** Claude Code, pi, Kiro; Codex when it ships. Adapter-based, ~200 LOC to add a new one.
